@@ -56,3 +56,4 @@ test.describe('Public Enquiry & Customer Portal Journey', () => {
     await expect(page.locator('text=/warranty|equipment|serial|active/i').first()).toBeVisible();
   });
 });
+

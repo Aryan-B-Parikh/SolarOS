@@ -114,6 +114,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({
       success: true,
+      leadId: lead.id,
       leadNumber: lead.lead_number,
       portalUrl,
       rawToken,

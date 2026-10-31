@@ -1,0 +1,18 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "SunPower Ops (SolarOS) API",
+    "version": "1.1.0",
+    "description": "Production REST API for SunPower Solar Installation Management System. Covers the full lifecycle from lead capture, site assessment, quotation, order confirmation, inventory tracking, dispatch, installation sign-off, warranty tracking, service desk ticketing, and executive analytics.",
+    "contact": {
+      "name": "SunPower Engineering Team",
+      "email": "ops@sunpowerops.in"
+    }
+  },
+  "servers": [
+    { "url": "/api/v1", "description": "Current Environment API Base" },
+    { "url": "http://localhost:3000/api/v1", "description": "Local Development Server" },
+    { "url": "https://staging.sunpowerops.in/api/v1", "description": "Staging Server" }
+  ]
+}
+

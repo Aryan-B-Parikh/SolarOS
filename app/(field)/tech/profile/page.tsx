@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import {
   User,
   Shield,
@@ -12,15 +13,26 @@ import {
   CheckCircle2,
   Phone,
   Building2,
-  ExternalLink
+  ExternalLink,
+  LogOut,
 } from 'lucide-react';
 import { flushOfflineQueue, getOfflineQueueCount } from '@/lib/offline-queue';
 
 export default function TechProfilePage() {
+  const router = useRouter();
   const [online, setOnline] = useState<boolean>(true);
   const [queueCount, setQueueCount] = useState<number>(0);
   const [syncing, setSyncing] = useState<boolean>(false);
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
+
+  async function handleLogout() {
+    try {
+      await fetch('/api/v1/auth/logout', { method: 'POST' });
+    } catch {}
+    router.push('/login');
+    router.refresh();
+  }
+
 
   useEffect(() => {
     setOnline(navigator.onLine);
@@ -148,6 +160,16 @@ export default function TechProfilePage() {
           <span>Today's Field Schedule</span>
           <ExternalLink className="w-4 h-4 text-slate-400" />
         </Link>
+        <button
+          onClick={handleLogout}
+          className="w-full p-3 rounded-xl border border-rose-200 bg-rose-50 hover:bg-rose-100 text-xs font-semibold text-rose-700 flex justify-between items-center transition-colors mt-2"
+        >
+          <span className="flex items-center gap-2">
+            <LogOut className="w-4 h-4" />
+            Sign Out of Device
+          </span>
+          <span className="text-[10px] text-rose-500">End Session</span>
+        </button>
       </div>
     </div>
   );

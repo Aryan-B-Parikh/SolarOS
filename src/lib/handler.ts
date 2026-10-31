@@ -3,6 +3,15 @@ import { ZodSchema, ZodError } from 'zod';
 import { AppError, formatErrorResponse } from './errors';
 import { logger } from './logger';
 import { Role, requireRole } from './rbac';
+import { extractToken, verifyJwt } from './jwt';
+
+// Ensure BigInt values can be serialized by NextResponse.json / JSON.stringify
+if (typeof BigInt.prototype !== 'undefined' && !(BigInt.prototype as any).toJSON) {
+  (BigInt.prototype as any).toJSON = function () {
+    return Number(this);
+  };
+}
+
 
 export interface HandlerOptions<TBody = any, TQuery = any> {
   bodySchema?: ZodSchema<TBody>;
@@ -58,6 +67,21 @@ export function createApiHandler<TBody = any, TQuery = any>(
             email: req.headers.get('x-user-email') || '',
             role: roleHeader,
           };
+        } else {
+          // Check for signed JWT in cookie or Authorization Bearer header
+          const cookieHeader = req.headers.get('cookie');
+          const token = extractToken(cookieHeader, authHeader);
+          if (token) {
+            const payload = verifyJwt(token);
+            if (payload) {
+              user = {
+                id: payload.userId,
+                name: payload.name,
+                email: payload.email,
+                role: payload.role,
+              };
+            }
+          }
         }
 
         if (options.allowedRoles && options.allowedRoles.length > 0) {

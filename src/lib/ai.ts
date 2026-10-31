@@ -14,7 +14,7 @@
  */
 
 export const AI_PROMPT_VERSION = '1.1.0';
-export const DEFAULT_AI_MODEL = 'gemini-1.5-flash';
+export const DEFAULT_AI_MODEL = process.env.AI_MODEL || 'gemini-1.5-flash';
 export const AI_TIMEOUT_MS = 8000;
 
 export interface AiAssessmentInput {
@@ -130,7 +130,7 @@ RULES:
     // Simulated LLM call structure with timeout guard
     // In production, fetch Google Gemini or OpenAI endpoint here using key
     // If external network is inaccessible or errors, catch falls back cleanly
-    const response = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=' + encodeURIComponent(key), {
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${DEFAULT_AI_MODEL}:generateContent?key=` + encodeURIComponent(key), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
