@@ -49,6 +49,7 @@ model User {
   purchase_orders      PurchaseOrder[]
   purchase_receipts    PurchaseReceipt[]
   scanned_units        DispatchUnit[]
+  dispatches_led       Dispatch[]             @relation("DispatchCrewLead")
   crews_led            Installation[]         @relation("CrewLead")
   assigned_tickets     ServiceTicket[]        @relation("AssignedTicket")
   created_tickets      ServiceTicket[]        @relation("TicketCreator")
@@ -1108,7 +1109,7 @@ model Dispatch {
   order            Order          @relation(fields: [order_id], references: [id], onDelete: Restrict)
   from_location    StockLocation  @relation("DispatchOrigin", fields: [from_location_id], references: [id])
   vehicle_location StockLocation? @relation("DispatchVehicle", fields: [vehicle_location_id], references: [id])
-  crew_lead        User?          @relation(fields: [crew_lead_id], references: [id])
+  crew_lead        User?          @relation("DispatchCrewLead", fields: [crew_lead_id], references: [id])
   lines            DispatchLine[]
   units            DispatchUnit[]
 

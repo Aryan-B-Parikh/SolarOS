@@ -2,6 +2,8 @@ import React from 'react';
 import Link from 'next/link';
 import prisma from '@/lib/db';
 import { hashToken } from '@/lib/access-links';
+import { formatDateIST } from '@/lib/dates';
+import { formatPaise } from '@/lib/money';
 
 interface PortalPageProps {
   params: { token: string };
@@ -24,11 +26,38 @@ export default async function CustomerPortalPage({ params }: PortalPageProps) {
       include: {
         customer: {
           include: {
-            leads: { orderBy: { created_at: 'desc' }, take: 1 },
-            quotes: { orderBy: { version: 'desc' }, take: 1 },
-            orders: { orderBy: { created_at: 'desc' }, take: 1 },
-            warranties: { include: { unit: { include: { product: true } } } },
-            service_tickets: { orderBy: { created_at: 'desc' }, take: 3 },
+            leads: {
+              include: { survey: true, assessment: true },
+              orderBy: { created_at: 'desc' },
+              take: 1,
+            },
+            quotes: {
+              include: { lines: { include: { product: true } } },
+              orderBy: { version: 'desc' },
+              take: 1,
+            },
+            orders: {
+              include: {
+                payments: true,
+                lines: { include: { product: true } },
+                installation: {
+                  include: {
+                    crew_lead: true,
+                    inventory_units: { include: { product: true } },
+                  },
+                },
+              },
+              orderBy: { created_at: 'desc' },
+              take: 1,
+            },
+            warranties: {
+              include: {
+                unit: { include: { product: true } },
+                product: true,
+              },
+              orderBy: { end_date: 'desc' },
+            },
+            service_tickets: { orderBy: { created_at: 'desc' }, take: 5 },
           },
         },
       },
@@ -55,13 +84,19 @@ export default async function CustomerPortalPage({ params }: PortalPageProps) {
     nextStepMessage = 'Your system is active and generating clean power under full SunPower warranty protection.';
   } else if (currentOrder?.status === 'INSTALLED') {
     currentStageIndex = 5; // Installed
-    nextStepMessage = 'Installation completed! Final handover documentation and warranty certificates are being generated.';
-  } else if (currentOrder?.status === 'CONFIRMED' || currentOrder?.status === 'READY_TO_DISPATCH' || currentOrder?.status === 'DISPATCHED') {
-    currentStageIndex = 4; // Preparation / Dispatch
-    nextStepMessage = 'Order confirmed: Equipment is being prepared for dispatch to your installation site.';
+    nextStepMessage = 'Installation completed! Final handover documentation and commissioning certificate are verified.';
+  } else if (currentOrder?.status === 'DISPATCHED') {
+    currentStageIndex = 4; // Dispatch
+    nextStepMessage = 'Equipment dispatched: Hardware is en route with your installation crew.';
+  } else if (currentOrder?.status === 'CONFIRMED' || currentOrder?.status === 'READY_TO_DISPATCH') {
+    currentStageIndex = 3; // Order confirmed
+    nextStepMessage = 'Order confirmed: Warehouse stock reserved and installation job scheduled.';
+  } else if (currentOrder?.status === 'PENDING_ADVANCE') {
+    currentStageIndex = 3; // Order pending advance
+    nextStepMessage = 'Quotation accepted! 30% advance booking payment is awaiting receipt to confirm warehouse release.';
   } else if (currentQuote?.status === 'SENT') {
-    currentStageIndex = 2; // Quotation
-    nextStepMessage = 'Your customized solar quotation is ready for your review and approval.';
+    currentStageIndex = 2; // Quotation ready
+    nextStepMessage = 'Your customized solar quotation is ready for your review and digital acceptance.';
   } else if (currentLead?.status === 'SURVEY_APPROVED') {
     currentStageIndex = 2;
     nextStepMessage = 'Roof survey approved: Your solar quotation and 12-line BOM are being finalized.';
@@ -81,25 +116,48 @@ export default async function CustomerPortalPage({ params }: PortalPageProps) {
     'Service',
   ];
 
+  // Calculate Advance & Payment Status (Phase 4)
+  const totalPaise = currentOrder?.total_paise ? BigInt(currentOrder.total_paise) : 0n;
+  const advanceRequiredPaise = currentOrder?.advance_required_paise ? BigInt(currentOrder.advance_required_paise) : 0n;
+  let advancePaidPaise = 0n;
+  if (currentOrder?.payments) {
+    for (const p of currentOrder.payments) {
+      if (p.status === 'CONFIRMED') {
+        advancePaidPaise += BigInt(p.amount_paise);
+      }
+    }
+  }
+
+  const isAdvanceReceived = advancePaidPaise >= advanceRequiredPaise && advanceRequiredPaise > 0n;
+  const installation = currentOrder?.installation;
+  const scheduledDateFormatted = installation?.scheduled_on ? formatDateIST(installation.scheduled_on) : null;
+
   return (
     <div className="space-y-6">
-      {/* Next Step Banner */}
-      <section className="bg-gradient-to-r from-amber-500 to-amber-600 rounded-2xl p-5 text-white shadow-md">
-        <div className="flex items-start space-x-3">
-          <div className="text-2xl mt-0.5">🚀</div>
+      {/* Current Status Hero Banner */}
+      <section className="bg-gradient-to-r from-amber-500 to-amber-600 rounded-3xl p-6 text-white shadow-md">
+        <div className="flex items-start space-x-3.5">
+          <div className="text-3xl mt-0.5">🚀</div>
           <div>
-            <h2 className="text-xs uppercase tracking-wider font-semibold text-amber-100">Current Status</h2>
-            <p className="text-base sm:text-lg font-bold mt-1 text-white leading-snug">
+            <h2 className="text-xs uppercase tracking-wider font-semibold text-amber-100">
+              Current Project Status
+            </h2>
+            <p className="text-base sm:text-xl font-black mt-1 text-white leading-snug">
               {nextStepMessage}
             </p>
+            {customer && (
+              <p className="text-xs text-amber-100/90 mt-1.5">
+                Property: {customer.address}, {customer.pincode}
+              </p>
+            )}
           </div>
         </div>
       </section>
 
       {/* 8-Stage Visual Progress Tracker */}
-      <section className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
+      <section className="bg-white rounded-3xl p-6 border border-slate-200 shadow-xs">
         <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-4">
-          Installation Journey (Stage {currentStageIndex + 1} of 8)
+          Installation Journey (Stage {currentStageIndex + 1} of 8: {STAGES[currentStageIndex]})
         </h3>
         <div className="grid grid-cols-4 sm:grid-cols-8 gap-2">
           {STAGES.map((stage, idx) => {
@@ -109,7 +167,7 @@ export default async function CustomerPortalPage({ params }: PortalPageProps) {
             return (
               <div key={stage} className="flex flex-col items-center text-center">
                 <div
-                  className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-xs transition ${
+                  className={`w-9 h-9 rounded-full flex items-center justify-center font-bold text-xs transition ${
                     isCompleted
                       ? 'bg-emerald-500 text-white'
                       : isCurrent
@@ -121,7 +179,11 @@ export default async function CustomerPortalPage({ params }: PortalPageProps) {
                 </div>
                 <span
                   className={`text-[11px] mt-1.5 font-medium leading-tight line-clamp-1 ${
-                    isCurrent ? 'text-amber-600 font-bold' : isCompleted ? 'text-slate-700' : 'text-slate-400'
+                    isCurrent
+                      ? 'text-amber-600 font-bold'
+                      : isCompleted
+                      ? 'text-slate-700'
+                      : 'text-slate-400'
                   }`}
                 >
                   {stage}
@@ -132,103 +194,193 @@ export default async function CustomerPortalPage({ params }: PortalPageProps) {
         </div>
       </section>
 
+      {/* Phase 4: Order & Schedule Tracker Card (When Order Exists) */}
+      {currentOrder && (
+        <section className="bg-white rounded-3xl p-6 border border-slate-200 shadow-xs space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between border-b border-slate-100 pb-4 gap-2">
+            <div>
+              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                Phase 4 • Order & Installation Schedule
+              </span>
+              <h3 className="text-lg font-black text-slate-900 mt-0.5">
+                Order #{currentOrder.order_number} ({currentOrder.capacity_kw} kW {currentOrder.system_type?.replace('_', ' ')})
+              </h3>
+            </div>
+            <span
+              className={`inline-block text-xs font-bold px-3 py-1 rounded-full ${
+                currentOrder.status === 'INSTALLED'
+                  ? 'bg-emerald-100 text-emerald-800'
+                  : currentOrder.status === 'DISPATCHED'
+                  ? 'bg-blue-100 text-blue-800'
+                  : currentOrder.status === 'CONFIRMED'
+                  ? 'bg-indigo-100 text-indigo-800'
+                  : 'bg-amber-100 text-amber-800'
+              }`}
+            >
+              Status: {currentOrder.status}
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-xs">
+            {/* Advance payment milestone */}
+            <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 space-y-1">
+              <span className="text-[10px] uppercase font-bold text-slate-400 block">Advance Milestone (30%)</span>
+              <div className="text-base font-extrabold text-slate-800 font-mono">
+                {formatPaise(advanceRequiredPaise)}
+              </div>
+              <div className="flex items-center space-x-1.5 mt-1">
+                <span
+                  className={`w-2 h-2 rounded-full ${
+                    isAdvanceReceived ? 'bg-emerald-500' : 'bg-amber-500'
+                  }`}
+                ></span>
+                <span className="text-[11px] font-semibold text-slate-600">
+                  {isAdvanceReceived ? 'Advance Received' : 'Pending Receipt'}
+                </span>
+              </div>
+            </div>
+
+            {/* Scheduled installation date */}
+            <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 space-y-1">
+              <span className="text-[10px] uppercase font-bold text-slate-400 block">Scheduled Installation</span>
+              <div className="text-base font-extrabold text-slate-800">
+                {scheduledDateFormatted || 'Pending Confirmation'}
+              </div>
+              <div className="text-[11px] text-slate-500">
+                Time Slot: {installation?.slot || 'Morning (09:00 AM)'}
+              </div>
+            </div>
+
+            {/* Assigned crew lead */}
+            <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 space-y-1">
+              <span className="text-[10px] uppercase font-bold text-slate-400 block">Assigned Crew Lead</span>
+              <div className="text-base font-extrabold text-slate-800">
+                {installation?.crew_lead?.name || 'SunPower Field Team'}
+              </div>
+              <div className="text-[11px] text-emerald-700 font-semibold">
+                Certified Rooftop Installer
+              </div>
+            </div>
+          </div>
+        </section>
+      )}
+
       {/* Grid of Dynamic Action Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
         {/* Quotation Card */}
-        <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm flex flex-col justify-between">
+        <div className="bg-white rounded-3xl p-6 border border-slate-200 shadow-xs flex flex-col justify-between">
           <div>
             <div className="flex items-center justify-between mb-3">
               <span className="text-xs font-bold uppercase tracking-wider text-slate-400">Quotation</span>
-              <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-blue-50 text-blue-700">
-                {currentQuote ? currentQuote.status : '3 kW On-Grid System'}
+              <span className="text-xs font-bold px-2.5 py-0.5 rounded-full bg-blue-50 text-blue-700">
+                {currentQuote ? currentQuote.status : '3 kW On-Grid'}
               </span>
             </div>
-            <h4 className="text-base font-bold text-slate-800">Customized Solar Proposal</h4>
-            <p className="text-xs text-slate-500 mt-1">
-              Includes tier-1 solar panels, on-grid inverter, mounting structures, and 5-year workmanship guarantee.
+            <h4 className="text-base font-bold text-slate-800">Solar Technical Proposal</h4>
+            <p className="text-xs text-slate-500 mt-1 leading-relaxed">
+              Includes 12-line BOM parts list, Tier-1 Mono PERC modules, on-grid inverter, PM Surya Ghar subsidy estimate, and estimated annual savings of ₹34,493/year.
             </p>
           </div>
           <div className="mt-5 pt-4 border-t border-slate-100 flex items-center justify-between">
-            <span className="text-xs font-medium text-slate-500">Estimated Annual Savings: Rs 34,500</span>
+            <span className="text-xs font-medium text-slate-500">
+              {currentQuote ? `Ref: #${currentQuote.quote_number}` : 'Custom Sizing'}
+            </span>
             <Link
               href={`/q/${rawToken}`}
-              className="inline-flex items-center text-xs font-bold text-amber-600 hover:text-amber-700 bg-amber-50 hover:bg-amber-100 px-3 py-1.5 rounded-lg transition"
+              className="inline-flex items-center text-xs font-bold text-amber-600 hover:text-amber-700 bg-amber-50 hover:bg-amber-100 px-3.5 py-1.5 rounded-xl transition"
             >
-              View Quote →
+              View Full Quote →
             </Link>
           </div>
         </div>
 
-        {/* Warranties & Equipment Card */}
-        <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm flex flex-col justify-between">
+        {/* Phase 5: Warranties & Serialized Equipment Card */}
+        <div className="bg-white rounded-3xl p-6 border border-slate-200 shadow-xs flex flex-col justify-between">
           <div>
             <div className="flex items-center justify-between mb-3">
-              <span className="text-xs font-bold uppercase tracking-wider text-slate-400">Equipment & Warranty</span>
-              <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700">
-                Guaranteed
+              <span className="text-xs font-bold uppercase tracking-wider text-slate-400">Phase 5 • Hardware & Warranty</span>
+              <span className="text-xs font-bold px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700">
+                {warranties.length > 0 ? `${warranties.length} Units Active` : 'Guaranteed'}
               </span>
             </div>
-            <h4 className="text-base font-bold text-slate-800">Warranty Coverage</h4>
-            <p className="text-xs text-slate-500 mt-1">
-              20 Years on Solar Photovoltaic Modules &bull; 2 Years on Solar Inverters & Batteries.
+            <h4 className="text-base font-bold text-slate-800">Warranty Protection</h4>
+            <p className="text-xs text-slate-500 mt-1 leading-relaxed">
+              25 Years panel linear performance warranty &bull; 5 Years inverter replacement warranty. All units registered with tamper-evident QR codes.
             </p>
-          </div>
-          <div className="mt-5 pt-4 border-t border-slate-100 flex items-center justify-between">
-            <span className="text-xs font-medium text-slate-500">
-              {warranties.length > 0 ? `${warranties.length} Active Warranties` : 'Active upon installation'}
-            </span>
-            <span className="text-xs font-bold text-slate-400">Digital Certificates</span>
-          </div>
-        </div>
 
-        {/* Service & Support Desk Card */}
-        <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm flex flex-col justify-between">
-          <div>
-            <div className="flex items-center justify-between mb-3">
-              <span className="text-xs font-bold uppercase tracking-wider text-slate-400">Service & Repairs</span>
-              <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-purple-50 text-purple-700">
-                Direct Desk
-              </span>
-            </div>
-            <h4 className="text-base font-bold text-slate-800">Report an Issue or Fault Code</h4>
-            <p className="text-xs text-slate-500 mt-1">
-              Need assistance? Raise a service request directly. In-warranty repairs incur zero customer charge.
-            </p>
+            {warranties.length > 0 && (
+              <div className="mt-3 space-y-1.5">
+                {warranties.slice(0, 2).map((w) => (
+                  <div key={w.id} className="flex justify-between items-center text-xs bg-slate-50 px-3 py-1.5 rounded-lg border border-slate-100">
+                    <span className="font-medium text-slate-800">{w.product?.name || 'Equipment Unit'}</span>
+                    <span className="text-emerald-700 font-bold font-mono text-[11px]">{w.months} Months</span>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
           <div className="mt-5 pt-4 border-t border-slate-100 flex items-center justify-between">
             <span className="text-xs font-medium text-slate-500">
-              {serviceTickets.length} Recent Requests
+              {warranties.length > 0 ? 'Verified on registry' : 'Activated on Delivery'}
             </span>
-            <button
-              type="button"
-              className="text-xs font-bold text-purple-600 hover:text-purple-700 bg-purple-50 hover:bg-purple-100 px-3 py-1.5 rounded-lg transition"
+            <Link
+              href={warranties[0]?.unit?.qr_code ? `/w/${warranties[0].unit.qr_code}` : '#'}
+              className="text-xs font-bold text-emerald-700 hover:text-emerald-800 bg-emerald-50 hover:bg-emerald-100 px-3 py-1.5 rounded-xl transition"
             >
-              Raise Request +
-            </button>
+              Lookup QR Status →
+            </Link>
           </div>
         </div>
 
-        {/* Completion Certificate Card */}
-        <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm flex flex-col justify-between">
+        {/* Phase 6: Handover Certificate & Before/After Gallery Card */}
+        <div className="bg-white rounded-3xl p-6 border border-slate-200 shadow-xs flex flex-col justify-between">
           <div>
             <div className="flex items-center justify-between mb-3">
-              <span className="text-xs font-bold uppercase tracking-wider text-slate-400">Documentation</span>
-              <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-600">
-                Tamper-Proof
+              <span className="text-xs font-bold uppercase tracking-wider text-slate-400">Phase 6 • Documentation</span>
+              <span className="text-xs font-bold px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-700">
+                SHA-256 Verified
               </span>
             </div>
-            <h4 className="text-base font-bold text-slate-800">Completion Certificate</h4>
-            <p className="text-xs text-slate-500 mt-1">
-              Verified with digital signature hash and DISCOM net-metering compliance records.
+            <h4 className="text-base font-bold text-slate-800">Handover Certificate & Photos</h4>
+            <p className="text-xs text-slate-500 mt-1 leading-relaxed">
+              Formal engineering sign-off, test power readings (2,850 W), earth resistance (&lt;5Ω), and before/after site inspection gallery.
             </p>
           </div>
           <div className="mt-5 pt-4 border-t border-slate-100 flex items-center justify-between">
-            <span className="text-xs font-medium text-slate-500">SHA-256 Verified</span>
-            <span className="text-xs font-bold text-slate-400">PDF Download</span>
+            <span className="text-xs font-medium text-slate-500">Tamper-Evident Proof</span>
+            <Link
+              href={`/certificate/${rawToken}`}
+              className="text-xs font-bold text-slate-800 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 px-3.5 py-1.5 rounded-xl transition"
+            >
+              View Certificate →
+            </Link>
+          </div>
+        </div>
+
+        {/* Phase 7: Service Desk & Ticket Request Card */}
+        <div className="bg-white rounded-3xl p-6 border border-slate-200 shadow-xs flex flex-col justify-between">
+          <div>
+            <div className="flex items-center justify-between mb-3">
+              <span className="text-xs font-bold uppercase tracking-wider text-slate-400">Phase 7 • Support & Service</span>
+              <span className="text-xs font-bold px-2.5 py-0.5 rounded-full bg-purple-50 text-purple-700">
+                Direct Helpdesk
+              </span>
+            </div>
+            <h4 className="text-base font-bold text-slate-800">Report Inverter Fault or Damage</h4>
+            <p className="text-xs text-slate-500 mt-1 leading-relaxed">
+              Diagnose inverter fault codes (E001-E008), report generation dips, or request scheduled cleaning. Zero charge for in-warranty service.
+            </p>
+          </div>
+          <div className="mt-5 pt-4 border-t border-slate-100 flex items-center justify-between">
+            <span className="text-xs font-medium text-slate-500">
+              {serviceTickets.length} Active Tickets
+            </span>
+            <span className="text-xs font-bold text-purple-700 bg-purple-50 px-3.5 py-1.5 rounded-xl">
+              24/7 Helpline: 1800-SUN-POWER
+            </span>
           </div>
         </div>
       </div>
     </div>
   );
 }
-

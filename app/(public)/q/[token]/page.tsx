@@ -132,3 +132,4 @@ export default async function PublicQuotePage({ params }: QuotePageProps) {
 
   return <QuoteClientView quote={quoteData} token={rawToken} />;
 }
+

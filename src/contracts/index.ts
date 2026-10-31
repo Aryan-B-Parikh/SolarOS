@@ -90,6 +90,19 @@ export const CreateQuoteSchema = z.object({
   validDays: z.number().int().positive().default(15),
 });
 
+export const ReviseQuoteSchema = z.object({
+  discountRupees: z.number().nonnegative().optional(),
+  validDays: z.number().int().positive().optional(),
+  cableDistanceM: z.number().positive().optional(),
+  capacityKw: z.number().positive().optional(),
+});
+
+export const UpdateQuoteLineSchema = z.object({
+  lineId: z.string().uuid(),
+  qty: z.number().positive(),
+  manualReason: z.string().min(3, 'A reason is required when manually modifying quantities'),
+});
+
 export const QuoteDecisionSchema = z.object({
   action: z.enum(['ACCEPT', 'REJECT']),
   acceptedName: z.string().optional(),

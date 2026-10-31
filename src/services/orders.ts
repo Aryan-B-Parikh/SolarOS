@@ -294,3 +294,106 @@ export async function updateSubsidyChecklist(
   });
 }
 
+export async function cancelOrder(orderId: string, reason: string, actorId?: string) {
+  return prisma.$transaction(async (tx) => {
+    const order = await tx.order.findUnique({
+      where: { id: orderId },
+      include: {
+        lines: {
+          include: {
+            allocations: {
+              where: { status: AllocationStatus.ACTIVE },
+            },
+          },
+        },
+        dispatches: true,
+        installation: true,
+      },
+    });
+
+    if (!order) throw new AppError('NOT_FOUND', 'Order not found', 404);
+
+    if (order.status === OrderStatus.COMPLETED) {
+      throw new AppError('CONFLICT', 'Cannot cancel a completed installation order.', 409);
+    }
+    if (order.status === OrderStatus.CANCELLED) {
+      throw new AppError('CONFLICT', 'Order is already cancelled.', 409);
+    }
+
+    if (!reason || !reason.trim()) {
+      throw new AppError('VALIDATION_FAILED', 'A reason is required when cancelling an order.', 422);
+    }
+
+    // 1. Release active reservations under row locks (ADR D3)
+    for (const line of order.lines) {
+      for (const alloc of line.allocations) {
+        // Release reservation in stock_level
+        await tx.stockLevel.update({
+          where: {
+            product_id_location_id: {
+              product_id: alloc.product_id,
+              location_id: alloc.location_id,
+            },
+          },
+          data: {
+            reserved: { decrement: alloc.qty },
+          },
+        });
+
+        // Mark allocation cancelled
+        await tx.stockAllocation.update({
+          where: { id: alloc.id },
+          data: { status: AllocationStatus.CANCELLED },
+        });
+      }
+
+      // Reset line reserved quantity
+      await tx.orderLine.update({
+        where: { id: line.id },
+        data: { qty_reserved: 0 },
+      });
+    }
+
+    // 2. Cancel active dispatches if still in picking
+    for (const d of order.dispatches) {
+      if (d.status === DispatchStatus.PICKING) {
+        await tx.dispatch.update({
+          where: { id: d.id },
+          data: { status: DispatchStatus.CANCELLED },
+        });
+      }
+    }
+
+    // 3. Cancel scheduled installation
+    if (order.installation && order.installation.status === InstallationStatus.SCHEDULED) {
+      await tx.installation.update({
+        where: { id: order.installation.id },
+        data: { status: InstallationStatus.CANCELLED },
+      });
+    }
+
+    // 4. Update order status
+    const cancelled = await tx.order.update({
+      where: { id: orderId },
+      data: {
+        status: OrderStatus.CANCELLED,
+        cancel_reason: reason,
+      },
+    });
+
+    await recordAudit(
+      {
+        actorType: 'USER',
+        actorId,
+        entityType: 'ORDER',
+        entityId: order.id,
+        action: 'ORDER_CANCELLED',
+        after: { reason, status: 'CANCELLED' },
+      },
+      tx
+    );
+
+    return cancelled;
+  });
+}
+

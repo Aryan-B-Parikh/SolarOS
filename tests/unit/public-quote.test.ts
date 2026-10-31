@@ -75,3 +75,4 @@ describe('Phase 3 - Public Quote Access & Security (TRD 2.4 / Screen S8 / D11)',
     assert.equal(validReason.trim().length >= 3, true, 'Valid reason is accepted');
   });
 });
+

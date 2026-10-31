@@ -404,7 +404,7 @@ export default function OrderDetailClient({ initialOrder }: OrderDetailClientPro
 
           {(!order.payments || order.payments.length === 0) ? (
             <p className="text-xs text-slate-500 py-6 text-center">
-              No payments recorded yet. Click "Record Payment" to log UPI, NEFT, cash or cheque.
+              No payments recorded yet. Click &quot;Record Payment&quot; to log UPI, NEFT, cash or cheque.
             </p>
           ) : (
             <div className="space-y-3">

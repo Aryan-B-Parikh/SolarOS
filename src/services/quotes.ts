@@ -602,3 +602,287 @@ export async function getQuoteById(id: string) {
   return quote;
 }
 
+export interface ReviseQuoteDto {
+  capacityKw?: number;
+  cableDistanceM?: number;
+  discountRupees?: number;
+  validDays?: number;
+}
+
+export async function reviseQuote(
+  quoteId: string,
+  data: ReviseQuoteDto = {},
+  user?: { id: string; role: string }
+) {
+  return prisma.$transaction(async (tx) => {
+    const oldQuote = await tx.quote.findUnique({
+      where: { id: quoteId },
+      include: {
+        lines: true,
+        lead: true,
+        template: {
+          include: {
+            bom_lines: {
+              include: { product: true },
+            },
+          },
+        },
+      },
+    });
+
+    if (!oldQuote) throw new AppError('NOT_FOUND', 'Quote not found', 404);
+
+    if (oldQuote.status === QuoteStatus.ACCEPTED) {
+      throw new AppError('CONFLICT', 'Cannot revise an already accepted quotation', 409);
+    }
+    if (oldQuote.status === QuoteStatus.SUPERSEDED) {
+      throw new AppError('CONFLICT', 'Cannot revise an already superseded quotation', 409);
+    }
+
+    // Mark previous quote as SUPERSEDED (version 1 becomes read-only and superseded)
+    await tx.quote.update({
+      where: { id: quoteId },
+      data: {
+        status: QuoteStatus.SUPERSEDED,
+      },
+    });
+
+    const nextVersion = oldQuote.version + 1;
+    const baseNumber = oldQuote.quote_number.replace(/-v\d+$/, '');
+    const newQuoteNumber = `${baseNumber}-v${nextVersion}`;
+
+    // Calculate capacity and cable distance
+    const capacityKw = data.capacityKw ?? Number(oldQuote.capacity_kw);
+    const cableDistanceM = data.cableDistanceM ?? Number(oldQuote.cable_distance_m);
+
+    // If template exists, recalculate BOM or clone existing lines
+    let quoteLinesData: any[] = [];
+    let subtotalPaise = 0n;
+    let totalTaxPaise = 0n;
+    let totalBomCostPaise = 0n;
+
+    if (oldQuote.template) {
+      const bomResult = generateBom(oldQuote.template as any, {
+        capacityKw,
+        cableDistanceM,
+      });
+      subtotalPaise = bomResult.subtotalPaise;
+      totalBomCostPaise = bomResult.totalCostPaise;
+
+      quoteLinesData = bomResult.lines.map((line, idx) => {
+        const lineTax = BigInt(Math.round((Number(line.lineTotalPaise) * line.taxRateBp) / 10000));
+        totalTaxPaise += lineTax;
+        return {
+          product_id: line.productId,
+          description: line.description,
+          qty: line.qty,
+          unit_price_paise: line.unitPricePaise,
+          tax_rate_bp: line.taxRateBp,
+          line_total_paise: line.lineTotalPaise,
+          rule: line.rule,
+          sort_order: idx,
+        };
+      });
+    } else {
+      quoteLinesData = oldQuote.lines.map((l, idx) => {
+        const lineTax = BigInt(Math.round((Number(l.line_total_paise) * l.tax_rate_bp) / 10000));
+        totalTaxPaise += lineTax;
+        subtotalPaise += l.line_total_paise;
+        return {
+          product_id: l.product_id,
+          description: l.description,
+          qty: l.qty,
+          unit_price_paise: l.unit_price_paise,
+          tax_rate_bp: l.tax_rate_bp,
+          line_total_paise: l.line_total_paise,
+          rule: l.rule,
+          is_manual: l.is_manual,
+          manual_reason: l.manual_reason,
+          sort_order: idx,
+        };
+      });
+    }
+
+    const discountPaise = data.discountRupees !== undefined
+      ? rupeesToPaise(data.discountRupees)
+      : oldQuote.discount_paise;
+
+    // Check 5% discount limit for sales (Q5 / FR-3.4)
+    const discountPercent = Number(subtotalPaise > 0n ? (discountPaise * 100n) / subtotalPaise : 0n);
+    if (user?.role === 'SALES' && discountPercent > 5) {
+      throw new AppError(
+        'DISCOUNT_NEEDS_APPROVAL',
+        `Sales discount of ${discountPercent}% exceeds maximum 5% authority. Director approval required.`,
+        422
+      );
+    }
+
+    const netPricePaise = subtotalPaise - discountPaise;
+    const totalPaise = netPricePaise + totalTaxPaise;
+
+    // Margin estimation
+    const margin = calculateMargin({
+      netPricePaise,
+      totalBomCostPaise,
+      labourAllowancePaise: oldQuote.template?.labour_allowance_paise,
+      targetMarginBp: 2000,
+    });
+
+    const validUntil = new Date(Date.now() + (data.validDays || 15) * 24 * 60 * 60 * 1000);
+
+    const newQuote = await tx.quote.create({
+      data: {
+        quote_number: newQuoteNumber,
+        lead_id: oldQuote.lead_id,
+        customer_id: oldQuote.customer_id,
+        template_id: oldQuote.template_id,
+        version: nextVersion,
+        supersedes_id: oldQuote.id,
+        status: QuoteStatus.DRAFT,
+        capacity_kw: capacityKw,
+        system_type: oldQuote.system_type,
+        cable_distance_m: cableDistanceM,
+        subtotal_paise: subtotalPaise,
+        discount_paise: discountPaise,
+        tax_paise: totalTaxPaise,
+        total_paise: totalPaise,
+        subsidy_estimate_paise: oldQuote.subsidy_estimate_paise,
+        estimated_margin_bp: margin.estimatedMarginBp,
+        margin_warning: margin.marginWarning,
+        valid_until: validUntil,
+        created_by: user?.id || null,
+        lines: {
+          create: quoteLinesData,
+        },
+      },
+      include: {
+        lines: true,
+      },
+    });
+
+    await recordAudit(
+      {
+        actorType: 'USER',
+        actorId: user?.id,
+        entityType: 'QUOTE',
+        entityId: newQuote.id,
+        action: 'QUOTE_REVISED',
+        after: {
+          newQuoteNumber,
+          version: nextVersion,
+          supersededQuoteId: oldQuote.id,
+        },
+      },
+      tx
+    );
+
+    return newQuote;
+  });
+}
+
+export async function updateQuoteLine(
+  quoteId: string,
+  data: { lineId: string; qty: number; manualReason: string },
+  user?: { id: string; role: string }
+) {
+  return prisma.$transaction(async (tx) => {
+    const quote = await tx.quote.findUnique({
+      where: { id: quoteId },
+      include: {
+        lines: { include: { product: true } },
+        template: true,
+      },
+    });
+
+    if (!quote) throw new AppError('NOT_FOUND', 'Quote not found', 404);
+
+    if (quote.status === QuoteStatus.SUPERSEDED || quote.status === QuoteStatus.ACCEPTED) {
+      throw new AppError(
+        'CONFLICT',
+        `Cannot edit lines of quote in ${quote.status} status. Only active DRAFT quotes can be edited.`,
+        409
+      );
+    }
+
+    if (!data.manualReason || data.manualReason.trim().length === 0) {
+      throw new AppError('VALIDATION_FAILED', 'A reason is required when manually modifying quantities.', 422);
+    }
+
+    const line = quote.lines.find((l) => l.id === data.lineId);
+    if (!line) throw new AppError('NOT_FOUND', 'Quote line not found', 404);
+
+    const newQty = data.qty;
+    const newLineTotalPaise = BigInt(Math.round(newQty * Number(line.unit_price_paise)));
+
+    await tx.quoteLine.update({
+      where: { id: data.lineId },
+      data: {
+        qty: newQty,
+        rule: 'MANUAL',
+        is_manual: true,
+        manual_reason: data.manualReason,
+        line_total_paise: newLineTotalPaise,
+      },
+    });
+
+    // Recalculate totals across all lines
+    const allLines = quote.lines.map((l) =>
+      l.id === data.lineId ? { ...l, qty: newQty, line_total_paise: newLineTotalPaise } : l
+    );
+
+    let subtotalPaise = 0n;
+    let totalTaxPaise = 0n;
+    let totalBomCostPaise = 0n;
+
+    for (const l of allLines) {
+      subtotalPaise += l.line_total_paise;
+      const lineTax = BigInt(Math.round((Number(l.line_total_paise) * l.tax_rate_bp) / 10000));
+      totalTaxPaise += lineTax;
+      totalBomCostPaise += BigInt(Math.round(Number(l.qty) * Number(l.product.std_cost_paise)));
+    }
+
+    const netPricePaise = subtotalPaise - quote.discount_paise;
+    const totalPaise = netPricePaise + totalTaxPaise;
+
+    const margin = calculateMargin({
+      netPricePaise,
+      totalBomCostPaise,
+      labourAllowancePaise: quote.template?.labour_allowance_paise,
+      targetMarginBp: 2000,
+    });
+
+    const updatedQuote = await tx.quote.update({
+      where: { id: quoteId },
+      data: {
+        subtotal_paise: subtotalPaise,
+        tax_paise: totalTaxPaise,
+        total_paise: totalPaise,
+        estimated_margin_bp: margin.estimatedMarginBp,
+        margin_warning: margin.marginWarning,
+      },
+      include: {
+        lines: true,
+      },
+    });
+
+    await recordAudit(
+      {
+        actorType: 'USER',
+        actorId: user?.id,
+        entityType: 'QUOTE',
+        entityId: quote.id,
+        action: 'QUOTE_LINE_MODIFIED',
+        after: {
+          lineId: data.lineId,
+          qty: newQty,
+          reason: data.manualReason,
+          newTotalPaise: totalPaise.toString(),
+        },
+      },
+      tx
+    );
+
+    return updatedQuote;
+  });
+}
+

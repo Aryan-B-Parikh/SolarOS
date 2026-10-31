@@ -1,5 +1,10 @@
-import { prisma } from './db';
 import crypto from 'crypto';
+
+async function getDb(tx?: any) {
+  if (tx) return tx;
+  const mod = await import('./db.ts');
+  return mod.prisma || mod.default;
+}
 
 export type OutboxChannel = 'EMAIL' | 'SMS';
 
@@ -24,7 +29,7 @@ export const OUTBOX_RETRY_INTERVALS_MS = [
  * Enqueues a notification to the outbox inside a transaction
  */
 export async function queueNotification(data: OutboxPayload, tx?: any) {
-  const db = tx || prisma;
+  const db = await getDb(tx);
   const key = data.idempotencyKey || crypto.randomUUID();
 
   return db.outbox.create({
@@ -49,5 +54,61 @@ export function getNextAttemptDate(attempts: number): Date | null {
     return null; // Exceeded retries, mark DEAD
   }
   return new Date(Date.now() + OUTBOX_RETRY_INTERVALS_MS[attempts]);
+}
+
+/**
+ * Updates outbox delivery status after a provider attempt (D6 / Phase 4 Acceptance)
+ * Moves to DELIVERED on receipt; retries on failure; transitions to DEAD after 5 attempts.
+ */
+export async function updateOutboxAttempt(
+  outboxId: string,
+  result: {
+    status: 'DELIVERED' | 'FAILED';
+    providerMessageId?: string;
+    errorMessage?: string;
+  },
+  tx?: any
+) {
+  const db = await getDb(tx);
+  const item = await db.outbox.findUnique({ where: { id: outboxId } });
+  if (!item) return null;
+
+  if (result.status === 'DELIVERED') {
+    return db.outbox.update({
+      where: { id: outboxId },
+      data: {
+        status: 'DELIVERED',
+        delivered_at: new Date(),
+        provider_message_id: result.providerMessageId || null,
+        last_error: null,
+      },
+    });
+  }
+
+  // Handle failure & retry intervals
+  const nextAttempts = item.attempts + 1;
+  const nextDate = getNextAttemptDate(nextAttempts);
+
+  if (!nextDate || nextAttempts >= 5) {
+    // Ends DEAD after 5 attempts
+    return db.outbox.update({
+      where: { id: outboxId },
+      data: {
+        status: 'DEAD',
+        attempts: nextAttempts,
+        last_error: result.errorMessage || 'Exceeded 5 delivery attempts',
+      },
+    });
+  }
+
+  return db.outbox.update({
+    where: { id: outboxId },
+    data: {
+      status: 'FAILED',
+      attempts: nextAttempts,
+      next_attempt_at: nextDate,
+      last_error: result.errorMessage || 'Send attempt failed',
+    },
+  });
 }
 

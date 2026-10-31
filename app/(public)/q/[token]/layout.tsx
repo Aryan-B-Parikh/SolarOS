@@ -131,3 +131,4 @@ export default async function QuoteLayout({ children, params }: QuoteLayoutProps
     </div>
   );
 }
+

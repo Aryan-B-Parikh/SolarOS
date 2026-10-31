@@ -645,3 +645,4 @@ export default function QuoteClientView({ quote, token }: Props) {
     </div>
   );
 }
+
