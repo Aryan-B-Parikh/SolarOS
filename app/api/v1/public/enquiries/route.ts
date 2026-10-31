@@ -1,9 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { CreateEnquirySchema } from '@/contracts';
+import { createLead } from '@/services/leads';
+import { generateAccessToken, hashToken } from '@/lib/access-links';
 import prisma from '@/lib/db';
-import { generateAccessToken } from '@/lib/access-links';
-import { createOutboxNotification } from '@/lib/outbox';
+import { queueNotification } from '@/lib/outbox';
 import { logger } from '@/lib/logger';
+import { LeadSource } from '@prisma/client';
 
 // In-memory IP rate limiter: 5 requests per minute per IP (TRD 2.6)
 const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
@@ -55,98 +57,72 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: true, leadNumber: 'SP-LEAD-BOT' }); // Silent sink
     }
 
-    // 3. Match or create customer by phone (E.164)
-    const normalizedPhone = data.phone.trim();
-    let customer = await prisma.customer.findUnique({
-      where: { phone: normalizedPhone },
+    // 3. Create lead via domain service
+    const lead = await createLead({
+      name: data.name,
+      phone: data.phone,
+      email: data.email || undefined,
+      address: data.address,
+      addressLine2: data.addressLine2,
+      city: data.city,
+      state: data.state,
+      pincode: data.pincode,
+      source: LeadSource.WEB,
+      requestedCapacityKw: data.requestedCapacityKw,
+      systemTypePref: data.systemTypePref as any,
+      wantsSubsidy: data.wantsSubsidy,
+      monthlyBillRupees: data.monthlyBillRupees,
     });
 
-    if (!customer) {
-      const customerCount = await prisma.customer.count();
-      const customerNumber = `CUST-${String(customerCount + 1).padStart(5, '0')}`;
+    // 4. Issue customer portal token
+    let rawToken: string;
+    let tokenHash: string;
+    let expiresAt: Date;
 
-      customer = await prisma.customer.create({
-        data: {
-          customer_number: customerNumber,
-          name: data.name.trim(),
-          phone: normalizedPhone,
-          email: data.email || null,
-          address: data.address.trim(),
-          address_line2: data.addressLine2 || null,
-          city: data.city || 'Ahmedabad',
-          state: data.state || 'Gujarat',
-          pincode: data.pincode,
-          consent_at: new Date(),
-        },
-      });
+    const tokenRes = generateAccessToken('PORTAL' as any);
+    if (typeof tokenRes === 'string') {
+      rawToken = tokenRes;
+      tokenHash = hashToken(rawToken);
+      expiresAt = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000);
+    } else {
+      rawToken = tokenRes.rawToken;
+      tokenHash = tokenRes.tokenHash;
+      expiresAt = tokenRes.expiresAt;
     }
-
-    // 4. Create Lead
-    const leadCount = await prisma.lead.count();
-    const leadNumber = `LD-${new Date().getFullYear()}-${String(leadCount + 1).padStart(4, '0')}`;
-
-    // SLA Due in 2 hours for follow-up
-    const slaDueAt = new Date(Date.now() + 2 * 60 * 60 * 1000);
-
-    const lead = await prisma.lead.create({
-      data: {
-        lead_number: leadNumber,
-        customer_id: customer.id,
-        source: 'WEB_FORM',
-        status: 'NEW',
-        sla_due_at: slaDueAt,
-        system_type_pref: data.systemTypePref || 'ON_GRID',
-        requested_capacity_kw: data.requestedCapacityKw || null,
-        monthly_bill_rupees: data.monthlyBillRupees || null,
-        wants_subsidy: data.wantsSubsidy,
-      },
-    });
-
-    // 5. Generate secure 90-day portal access link
-    const { rawToken, tokenHash, expiresAt } = generateAccessToken('PORTAL');
 
     await prisma.customerAccessLink.create({
       data: {
-        customer_id: customer.id,
+        customer_id: lead.customer_id,
         scope: 'PORTAL',
         token_hash: tokenHash,
         expires_at: expiresAt,
       },
     });
 
-    const portalUrl = `${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/portal/${rawToken}`;
+    const portalUrl = `${process.env.APP_BASE_URL || 'http://localhost:3000'}/portal/${rawToken}`;
 
-    // 6. Queue confirmation message in outbox
-    await createOutboxNotification(
-      prisma,
-      'ENQUIRY_CONFIRMATION',
-      {
-        customerId: customer.id,
+    // 5. Transactional outbox notification
+    await queueNotification({
+      channel: 'SMS',
+      recipient: data.phone,
+      template: 'ENQUIRY_CONFIRMATION',
+      payload: {
         leadNumber: lead.lead_number,
-        phone: customer.phone,
         portalUrl,
       },
-      lead.id
-    );
-
-    logger.info('Public enquiry successfully received and lead created', {
-      leadNumber: lead.lead_number,
-      customerId: customer.id,
     });
 
     return NextResponse.json({
       success: true,
       leadNumber: lead.lead_number,
       portalUrl,
-      rawToken,
       message: 'Your solar enquiry has been received. Our team will contact you shortly.',
     });
   } catch (err: any) {
     logger.error('Failed to create public enquiry', err);
     return NextResponse.json(
-      { error: { code: 'INTERNAL_ERROR', message: 'Unable to submit enquiry at this time' } },
+      { error: { code: 'INTERNAL_ERROR', message: err?.message || 'Unable to submit enquiry at this time' } },
       { status: 500 }
     );
   }
 }
-

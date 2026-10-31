@@ -273,6 +273,10 @@ export async function transitionLead(
 
     validateTransition('LEAD', lead.status, toStatus);
 
+    if ((toStatus === LeadStatus.LOST || toStatus === LeadStatus.DISQUALIFIED) && (!reason || reason.trim().length === 0)) {
+      throw new AppError('VALIDATION_FAILED', `A reason is mandatory when marking a lead as ${toStatus}`, 422);
+    }
+
     const updateData: any = {
       status: toStatus,
     };
