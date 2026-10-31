@@ -27,3 +27,4 @@ export const POST = createApiHandler(
     return NextResponse.json({ lead }, { status: 201 });
   }
 );
+

@@ -23,3 +23,4 @@ export function MoneyText({ paise, className, prefix = 'Rs ', showPaise = false 
     </span>
   );
 }
+

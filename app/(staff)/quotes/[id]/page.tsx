@@ -36,3 +36,4 @@ export default async function QuoteDetailPage({
 
   return <QuoteDetailClient initialQuote={quote as any} />;
 }
+

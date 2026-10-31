@@ -1,5 +1,18 @@
-import { AppError } from '@/lib/errors';
-import { LeadStatus } from '@prisma/client';
+import { AppError } from '../../lib/errors.ts';
+
+export const LeadStatus = {
+  NEW: 'NEW',
+  CONTACTED: 'CONTACTED',
+  QUALIFIED: 'QUALIFIED',
+  SURVEY_SCHEDULED: 'SURVEY_SCHEDULED',
+  SURVEY_APPROVED: 'SURVEY_APPROVED',
+  QUOTED: 'QUOTED',
+  WON: 'WON',
+  LOST: 'LOST',
+  DISQUALIFIED: 'DISQUALIFIED',
+} as const;
+
+export type LeadStatus = (typeof LeadStatus)[keyof typeof LeadStatus];
 
 export interface LeadTransitionContext {
   toStatus: LeadStatus;

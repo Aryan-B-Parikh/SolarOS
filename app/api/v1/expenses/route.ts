@@ -51,3 +51,4 @@ export const POST = createApiHandler(
     return NextResponse.json({ expense }, { status: 201 });
   }
 );
+

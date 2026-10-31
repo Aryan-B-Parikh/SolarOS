@@ -42,3 +42,4 @@ export async function getNextSequence(name: string, year = new Date().getFullYea
       return `${name.toUpperCase()}-${year}-${padded}`;
   }
 }
+

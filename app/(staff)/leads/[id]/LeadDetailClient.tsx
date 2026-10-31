@@ -701,3 +701,4 @@ export default function LeadDetailClient({ initialLead, technicians, templates }
     </div>
   );
 }
+

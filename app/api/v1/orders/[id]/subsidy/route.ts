@@ -26,3 +26,4 @@ export const PATCH = createApiHandler(
     return NextResponse.json({ subsidy });
   }
 );
+

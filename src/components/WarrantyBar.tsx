@@ -74,3 +74,4 @@ export function WarrantyBar({ startDate, endDate, status = 'ACTIVE', className }
     </div>
   );
 }
+

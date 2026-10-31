@@ -25,3 +25,4 @@ export const POST = createApiHandler(
     return NextResponse.json({ quote }, { status: 201 });
   }
 );
+

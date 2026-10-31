@@ -439,3 +439,4 @@ export default function LeadBoardClient({ salesUsers, initialLeads }: LeadBoardC
     </>
   );
 }
+

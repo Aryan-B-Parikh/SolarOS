@@ -41,3 +41,4 @@ export function calculateMargin(input: MarginInput): MarginResult {
     marginWarning,
   };
 }
+

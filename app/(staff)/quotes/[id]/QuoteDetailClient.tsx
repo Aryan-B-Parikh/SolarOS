@@ -247,3 +247,4 @@ export default function QuoteDetailClient({ initialQuote }: QuoteDetailClientPro
     </div>
   );
 }
+

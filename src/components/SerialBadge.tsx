@@ -35,3 +35,4 @@ export function SerialBadge({ serial, qrCode, productName, className }: SerialBa
     </div>
   );
 }
+

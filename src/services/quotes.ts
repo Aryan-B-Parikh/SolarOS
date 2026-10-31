@@ -327,3 +327,4 @@ export async function getQuoteById(id: string) {
   if (!quote) throw new AppError('NOT_FOUND', 'Quote not found', 404);
   return quote;
 }
+

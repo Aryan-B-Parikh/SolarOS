@@ -145,3 +145,4 @@ export function StageChip({ stage, size = 'sm', className }: StageChipProps) {
     </span>
   );
 }
+

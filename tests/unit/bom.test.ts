@@ -1,6 +1,7 @@
-import { describe, it, expect } from 'vitest';
-import { generateBom } from '@/domain/bom';
-import { calculateMargin } from '@/domain/margin';
+import { describe, it } from 'node:test';
+import assert from 'node:assert/strict';
+import { generateBom } from '../../src/domain/bom.ts';
+import { calculateMargin } from '../../src/domain/margin.ts';
 
 describe('BOM & Margin Engine (TRD 2.4 / FR-3.1 / FR-3.8)', () => {
   const dummyTemplate = {
@@ -66,15 +67,15 @@ describe('BOM & Margin Engine (TRD 2.4 / FR-3.1 / FR-3.8)', () => {
   };
 
   it('calculates 6 panels for 3 kW package with 540 Wp panels', () => {
-    const res = generateBom(dummyTemplate, { capacityKw: 3, panelRatedWp: 540 });
-    expect(res.panelCount).toBe(6);
-    expect(res.installedCapacityKwp).toBe(3.24);
+    const res = generateBom(dummyTemplate as any, { capacityKw: 3, panelRatedWp: 540 });
+    assert.equal(res.panelCount, 6);
+    assert.equal(res.installedCapacityKwp, 3.24);
   });
 
   it('calculates cable meters as (2 x 25m + 5m = 55m)', () => {
-    const res = generateBom(dummyTemplate, { capacityKw: 3, cableDistanceM: 25 });
+    const res = generateBom(dummyTemplate as any, { capacityKw: 3, cableDistanceM: 25 });
     const cableLine = res.lines.find((l) => l.rule === 'PER_CABLE_METER');
-    expect(cableLine?.qty).toBe(55);
+    assert.equal(cableLine?.qty, 55);
   });
 
   it('flags margin warning when estimated margin is below 20% target', () => {
@@ -85,7 +86,7 @@ describe('BOM & Margin Engine (TRD 2.4 / FR-3.1 / FR-3.8)', () => {
       targetMarginBp: 2000, // 20%
     });
     // Margin = 1,00,000 - 82,000 - 5,000 = 13,000 (13%)
-    expect(margin.marginPercent).toBe(13);
-    expect(margin.marginWarning).toBe(true);
+    assert.equal(margin.marginPercent, 13);
+    assert.equal(margin.marginWarning, true);
   });
 });
