@@ -7,6 +7,7 @@ import { calculateMargin } from '@/domain/margin';
 import { validateTransition } from '@/domain/state-machines/transitions';
 import { QuoteStatus, LeadStatus, OrderStatus, SystemType } from '@prisma/client';
 import { rupeesToPaise } from '@/lib/money';
+import { hashToken } from '@/lib/access-links';
 import crypto from 'crypto';
 
 export interface CreateQuoteDto {
@@ -183,6 +184,21 @@ export async function sendQuote(quoteId: string, user?: { id: string; role: stri
       },
     });
 
+    // Populate customer_access_links record (D11: quote validity + 30 days)
+    const validUntilDate = new Date(quote.valid_until);
+    const validDays = Math.max(1, Math.ceil((validUntilDate.getTime() - Date.now()) / (24 * 60 * 60 * 1000)));
+    const linkExpiresAt = new Date(Date.now() + (validDays + 30) * 24 * 60 * 60 * 1000);
+
+    await tx.customerAccessLink.create({
+      data: {
+        customer_id: quote.customer_id,
+        scope: 'QUOTE',
+        token_hash: tokenHash,
+        expires_at: linkExpiresAt,
+        created_by: user?.id || null,
+      },
+    });
+
     await tx.lead.update({
       where: { id: quote.lead_id },
       data: { status: LeadStatus.QUOTED },
@@ -293,6 +309,264 @@ export async function acceptQuote(
 
     return { success: true, orderId: order.id, orderNumber };
   });
+}
+
+export async function rejectQuote(
+  quoteId: string,
+  data: { rejectReason: string; phoneLastFour: string; idempotencyKey?: string }
+) {
+  return prisma.$transaction(async (tx) => {
+    const quote = await tx.quote.findUnique({
+      where: { id: quoteId },
+      include: { customer: true, lead: true },
+    });
+    if (!quote) throw new AppError('NOT_FOUND', 'Quote not found', 404);
+
+    if (quote.status === QuoteStatus.ACCEPTED) {
+      throw new AppError('CONFLICT', 'Quote has already been accepted and cannot be rejected.', 409);
+    }
+
+    if (!data.rejectReason || data.rejectReason.trim().length === 0) {
+      throw new AppError('VALIDATION_ERROR', 'A reason is required when rejecting a quotation.', 422);
+    }
+
+    // Phone verification
+    const cleanPhone = quote.customer.phone.replace(/\D/g, '');
+    if (!cleanPhone.endsWith(data.phoneLastFour)) {
+      throw new AppError('VERIFICATION_REQUIRED', 'Phone last 4 digits did not match.', 403);
+    }
+
+    // Check expiry
+    if (new Date(quote.valid_until).getTime() < Date.now()) {
+      throw new AppError('LINK_EXPIRED', 'Quote validity has expired.', 410);
+    }
+
+    // Update Quote
+    await tx.quote.update({
+      where: { id: quoteId },
+      data: {
+        status: QuoteStatus.REJECTED,
+        rejected_at: new Date(),
+        reject_reason: data.rejectReason,
+      },
+    });
+
+    // Lead stays QUOTED per specification (C3, Section 4.3)
+
+    // Write transactional outbox notification to sales
+    await tx.outbox.create({
+      data: {
+        channel: 'SMS',
+        recipient: 'SALES_ALERT',
+        template: 'QUOTE_REJECTED',
+        payload: {
+          quoteNumber: quote.quote_number,
+          customerName: quote.customer.name,
+          customerPhone: quote.customer.phone,
+          rejectReason: data.rejectReason,
+        },
+        idempotency_key: data.idempotencyKey || `quote-reject-${quote.id}-${Date.now()}`,
+      },
+    });
+
+    await recordAudit(
+      {
+        actorType: 'CUSTOMER',
+        entityType: 'QUOTE',
+        entityId: quote.id,
+        action: 'QUOTE_REJECTED',
+        after: { quoteNumber: quote.quote_number, rejectReason: data.rejectReason },
+      },
+      tx
+    );
+
+    return { success: true, quoteNumber: quote.quote_number, status: QuoteStatus.REJECTED };
+  });
+}
+
+export async function getQuoteByPublicToken(rawToken: string) {
+  const tokenHash = hashToken(rawToken);
+
+  // Check link security in customer_access_links if exists
+  const link = await prisma.customerAccessLink.findUnique({
+    where: { token_hash: tokenHash },
+  });
+
+  const now = Date.now();
+  if (link) {
+    if (link.revoked_at && new Date(link.revoked_at).getTime() <= now) {
+      throw new AppError('LINK_REVOKED', 'This access link has been revoked.', 403);
+    }
+    if (link.locked_until && new Date(link.locked_until).getTime() > now) {
+      const remainingMinutes = Math.ceil((new Date(link.locked_until).getTime() - now) / (60 * 1000));
+      throw new AppError(
+        'LINK_LOCKED',
+        `Access link temporarily locked due to repeated verification failures. Please try again in ${remainingMinutes} minutes.`,
+        429
+      );
+    }
+  }
+
+  // Find quote by public_token_hash
+  let quote = await prisma.quote.findUnique({
+    where: { public_token_hash: tokenHash },
+    include: {
+      customer: true,
+      lead: { include: { assessment: true } },
+      template: true,
+      lines: {
+        include: { product: true },
+        orderBy: { sort_order: 'asc' },
+      },
+    },
+  });
+
+  // Fallback: If not found by token_hash on quote, check if link belongs to a customer
+  if (!quote && link && link.scope === 'QUOTE') {
+    quote = await prisma.quote.findFirst({
+      where: { customer_id: link.customer_id, status: { in: [QuoteStatus.SENT, QuoteStatus.ACCEPTED, QuoteStatus.REJECTED] } },
+      include: {
+        customer: true,
+        lead: { include: { assessment: true } },
+        template: true,
+        lines: {
+          include: { product: true },
+          orderBy: { sort_order: 'asc' },
+        },
+      },
+      orderBy: { version: 'desc' },
+    });
+  }
+
+  if (!quote) {
+    throw new AppError('NOT_FOUND', 'Quote not found or invalid access token.', 404);
+  }
+
+  const isExpired = new Date(quote.valid_until).getTime() < now;
+
+  return {
+    quote,
+    link,
+    isExpired,
+  };
+}
+
+export async function acceptQuoteByPublicToken(
+  rawToken: string,
+  data: { acceptedName: string; phoneLastFour: string; idempotencyKey?: string }
+) {
+  const tokenHash = hashToken(rawToken);
+  const { quote, link, isExpired } = await getQuoteByPublicToken(rawToken);
+
+  if (isExpired) {
+    throw new AppError('LINK_EXPIRED', 'Quote validity has expired.', 410);
+  }
+
+  const cleanPhone = quote.customer.phone.replace(/\D/g, '');
+  if (!cleanPhone.endsWith(data.phoneLastFour)) {
+    const newFailures = (link?.failed_attempts || 0) + 1;
+    const shouldLock = newFailures >= 5;
+    const lockedUntil = shouldLock ? new Date(Date.now() + 15 * 60 * 1000) : null;
+
+    if (link) {
+      await prisma.customerAccessLink.update({
+        where: { id: link.id },
+        data: {
+          failed_attempts: newFailures,
+          locked_until: lockedUntil,
+        },
+      });
+    }
+
+    if (shouldLock) {
+      throw new AppError(
+        'LINK_LOCKED',
+        'Too many failed verification attempts. Access link locked for 15 minutes.',
+        429
+      );
+    }
+
+    throw new AppError(
+      'VERIFICATION_REQUIRED',
+      `Phone last 4 digits did not match. ${5 - newFailures} attempts remaining.`,
+      403
+    );
+  }
+
+  // Verification passed - reset failed attempts
+  if (link && link.failed_attempts > 0) {
+    await prisma.customerAccessLink.update({
+      where: { id: link.id },
+      data: { failed_attempts: 0, locked_until: null },
+    });
+  }
+
+  const result = await acceptQuote(quote.id, {
+    acceptedName: data.acceptedName,
+    phoneLastFour: data.phoneLastFour,
+    idempotencyKey: data.idempotencyKey || `public-accept-${quote.id}-${Date.now()}`,
+  });
+
+  return result;
+}
+
+export async function rejectQuoteByPublicToken(
+  rawToken: string,
+  data: { rejectReason: string; phoneLastFour: string; idempotencyKey?: string }
+) {
+  const tokenHash = hashToken(rawToken);
+  const { quote, link, isExpired } = await getQuoteByPublicToken(rawToken);
+
+  if (isExpired) {
+    throw new AppError('LINK_EXPIRED', 'Quote validity has expired.', 410);
+  }
+
+  const cleanPhone = quote.customer.phone.replace(/\D/g, '');
+  if (!cleanPhone.endsWith(data.phoneLastFour)) {
+    const newFailures = (link?.failed_attempts || 0) + 1;
+    const shouldLock = newFailures >= 5;
+    const lockedUntil = shouldLock ? new Date(Date.now() + 15 * 60 * 1000) : null;
+
+    if (link) {
+      await prisma.customerAccessLink.update({
+        where: { id: link.id },
+        data: {
+          failed_attempts: newFailures,
+          locked_until: lockedUntil,
+        },
+      });
+    }
+
+    if (shouldLock) {
+      throw new AppError(
+        'LINK_LOCKED',
+        'Too many failed verification attempts. Access link locked for 15 minutes.',
+        429
+      );
+    }
+
+    throw new AppError(
+      'VERIFICATION_REQUIRED',
+      `Phone last 4 digits did not match. ${5 - newFailures} attempts remaining.`,
+      403
+    );
+  }
+
+  // Verification passed - reset failed attempts
+  if (link && link.failed_attempts > 0) {
+    await prisma.customerAccessLink.update({
+      where: { id: link.id },
+      data: { failed_attempts: 0, locked_until: null },
+    });
+  }
+
+  const result = await rejectQuote(quote.id, {
+    rejectReason: data.rejectReason,
+    phoneLastFour: data.phoneLastFour,
+    idempotencyKey: data.idempotencyKey || `public-reject-${quote.id}-${Date.now()}`,
+  });
+
+  return result;
 }
 
 export async function getQuotes(filters?: { leadId?: string; status?: QuoteStatus }) {

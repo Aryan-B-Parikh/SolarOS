@@ -185,12 +185,65 @@ export async function getSurveyById(surveyId: string) {
   const survey = await prisma.siteSurvey.findUnique({
     where: { id: surveyId },
     include: {
-      lead: true,
+      lead: {
+        include: {
+          customer: true,
+        },
+      },
       surveyor: { select: { id: true, name: true, phone: true } },
+      reviewer: { select: { id: true, name: true } },
     },
   });
   if (!survey) throw new AppError('NOT_FOUND', 'Survey not found', 404);
-  return survey;
+
+  const attachments = await prisma.attachment.findMany({
+    where: {
+      owner_type: 'SURVEY',
+      owner_id: surveyId,
+    },
+    orderBy: { created_at: 'asc' },
+  });
+
+  return {
+    ...survey,
+    attachments,
+  };
+}
+
+export async function updateSurveyDraft(
+  surveyId: string,
+  data: Partial<{
+    roofType: RoofType;
+    azimuthDeg: number;
+    tiltDeg: number;
+    usableAreaSqm: number;
+    shading: ShadingLevel;
+    cableDistanceM: number;
+    structureHeightM?: number;
+    notes?: string;
+  }>,
+  actorId?: string
+) {
+  return prisma.$transaction(async (tx) => {
+    const survey = await tx.siteSurvey.findUnique({ where: { id: surveyId } });
+    if (!survey) throw new AppError('NOT_FOUND', 'Survey not found', 404);
+
+    const updated = await tx.siteSurvey.update({
+      where: { id: surveyId },
+      data: {
+        ...(data.roofType && { roof_type: data.roofType }),
+        ...(data.azimuthDeg !== undefined && { azimuth_deg: data.azimuthDeg }),
+        ...(data.tiltDeg !== undefined && { tilt_deg: data.tiltDeg }),
+        ...(data.usableAreaSqm !== undefined && { usable_area_sqm: data.usableAreaSqm }),
+        ...(data.shading && { shading: data.shading }),
+        ...(data.cableDistanceM !== undefined && { cable_distance_m: data.cableDistanceM }),
+        ...(data.structureHeightM !== undefined && { structure_height_m: data.structureHeightM }),
+        ...(data.notes !== undefined && { notes: data.notes }),
+      },
+    });
+
+    return updated;
+  });
 }
 
 export async function submitSurvey(
@@ -230,6 +283,23 @@ export async function submitSurvey(
         notes: data.notes || null,
         surveyor_id: survey.surveyor_id || actorId || null,
       },
+    });
+
+    // Link uploaded photos to this survey
+    if (data.photoAttachmentIds && data.photoAttachmentIds.length > 0) {
+      await tx.attachment.updateMany({
+        where: { id: { in: data.photoAttachmentIds } },
+        data: {
+          owner_type: 'SURVEY',
+          owner_id: survey.id,
+        },
+      });
+    }
+
+    // Keep lead roof area in sync with ground truth survey measurements
+    await tx.lead.update({
+      where: { id: survey.lead_id },
+      data: { roof_area_sqm: data.usableAreaSqm },
     });
 
     await tx.leadActivity.create({
