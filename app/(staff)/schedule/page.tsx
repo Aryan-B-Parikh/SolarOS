@@ -16,10 +16,10 @@ export default async function SchedulePage() {
     prisma.installation.findMany({
       include: {
         order: { include: { customer: true } },
-        crew_lead: { include: { user: true } },
-        crew_members: { include: { technician: { include: { user: true } } } },
+        crew_lead: true,
+        crew: { include: { technician: { include: { user: true } } } },
       },
-      orderBy: { scheduled_date: 'asc' },
+      orderBy: { scheduled_on: 'asc' },
     }),
     prisma.installation.findMany({
       where: {
@@ -27,7 +27,7 @@ export default async function SchedulePage() {
       },
       include: {
         order: { include: { customer: true } },
-        crew_lead: { include: { user: true } },
+        crew_lead: true,
       },
     }),
   ]);

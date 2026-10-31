@@ -75,7 +75,7 @@ export default async function QuotesPage() {
                     <span className="block text-[11px] text-slate-400 font-normal">{q.customer.phone}</span>
                   </td>
                   <td className="px-4 py-3 font-semibold">
-                    {q.capacity_kw} kW {q.system_type === 'OFF_GRID' ? 'Off-Grid' : 'On-Grid'}
+                    {Number(q.capacity_kw)} kW {q.system_type === 'OFF_GRID' ? 'Off-Grid' : 'On-Grid'}
                   </td>
                   <td className="px-4 py-3 text-right font-bold text-slate-900">
                     <MoneyText paise={q.total_paise} />

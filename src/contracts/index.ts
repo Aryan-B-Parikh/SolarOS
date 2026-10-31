@@ -174,3 +174,147 @@ export const PortalVerifySchema = z.object({
   phoneLastFour: z.string().length(4, 'Must enter last 4 digits of phone'),
 });
 
+
+
+// ==========================================
+// Phase 5: Dispatch & Inventory Operations (FR-5.1 - FR-5.6)
+// ==========================================
+export const ScanDispatchUnitSchema = z.object({
+  unitCode: z.string().min(1, 'Serial number or QR code is required'),
+  method: z.enum(['QR', 'BARCODE', 'MANUAL']).default('QR'),
+});
+
+export const UnscanDispatchUnitSchema = z.object({
+  unitId: z.string().uuid('Valid unit UUID required'),
+});
+
+export const DepartDispatchSchema = z.object({
+  departedAt: z.string().datetime().or(z.string().regex(/^\d{4}-\d{2}-\d{2}$/)).optional(),
+});
+
+export const DeliverDispatchSchema = z.object({
+  deliveredAt: z.string().datetime().or(z.string().regex(/^\d{4}-\d{2}-\d{2}$/)).optional(),
+  deliveredLat: z.number().optional(),
+  deliveredLng: z.number().optional(),
+});
+
+export const AdjustStockSchema = z.object({
+  productId: z.string().uuid(),
+  locationId: z.string().uuid(),
+  qtyDelta: z.number().refine((val) => val !== 0, 'Quantity delta cannot be zero'),
+  reason: z.string().min(3, 'A justification reason is required'),
+});
+
+export const ReceiveGoodsSchema = z.object({
+  receiptNumber: z.string().optional(),
+  supplierId: z.string().uuid().optional(),
+  poId: z.string().uuid().optional(),
+  supplierInvoiceRef: z.string().optional(),
+  locationId: z.string().uuid(),
+  receivedOn: z.string().optional(),
+  lines: z.array(
+    z.object({
+      productId: z.string().uuid(),
+      qty: z.number().positive(),
+      unitCostPaise: z.number().nonnegative(),
+      poLineId: z.string().uuid().optional(),
+      serialNumbers: z.array(z.string()).optional(),
+    })
+  ).min(1, 'At least one line item is required'),
+});
+
+
+// ==========================================
+// Phase 6: Field Installation Job Stepper Contracts
+// ==========================================
+export const StartInstallationSchema = z.object({
+  lat: z.number().optional(),
+  lng: z.number().optional(),
+});
+
+export const UpdateInstallationDraftSchema = z.object({
+  checklist: z.record(z.boolean()).optional(),
+  installedCapacityKw: z.number().positive().optional(),
+  testReadingW: z.number().nonnegative().optional(),
+});
+
+export const HoldInstallationSchema = z.object({
+  holdReason: z.string().min(3, 'A reason is required when holding an installation job'),
+});
+
+// ==========================================
+// Phase 7: Service Desk, Tickets & Search Contracts (PRD C9, ADR D5)
+// ==========================================
+export const SearchQuerySchema = z.object({
+  q: z.string().min(1, 'Search query is required'),
+});
+
+export const AssignTicketSchema = z.object({
+  technicianId: z.string().uuid('Valid technician UUID is required'),
+  scheduledDate: z.string().optional(),
+});
+
+export const ReplaceTicketPartSchema = z.object({
+  removedUnitCode: z.string().min(1, 'Removed serial or QR code is required'),
+  replacementUnitCode: z.string().min(1, 'Replacement serial or QR code is required'),
+  isChargeable: z.boolean().optional(),
+  unitPricePaise: z.number().nonnegative().optional(),
+});
+
+export const ResolveTicketSchema = z.object({
+  resolutionNotes: z.string().min(3, 'Resolution notes are required'),
+  isChargeable: z.boolean().optional(),
+  laborCostPaise: z.number().nonnegative().optional(),
+  partsCostPaise: z.number().nonnegative().optional(),
+});
+
+export const ConfirmTicketSchema = z.object({
+  confirmationMethod: z.enum(['PORTAL', 'PHONE']).default('PORTAL'),
+  customerFeedback: z.string().optional(),
+});
+
+export const ReopenTicketSchema = z.object({
+  reason: z.string().min(3, 'Reason for reopening is required'),
+});
+
+export const ExcludeWarrantySchema = z.object({
+  reason: z.string().min(3, 'Exclusion reason is required'),
+});
+
+export const PortalCreateTicketSchema = z.object({
+  installationId: z.string().uuid().optional(),
+  unitId: z.string().uuid().optional(),
+  category: z.enum(['NO_POWER', 'FAULT_CODE', 'LOW_GENERATION', 'DAMAGE', 'OTHER']),
+  faultCode: z.string().optional(),
+  description: z.string().min(5, 'Please provide details of the issue (at least 5 characters)'),
+  priority: z.enum(['LOW', 'NORMAL', 'HIGH', 'URGENT']).default('NORMAL'),
+});
+
+// ==========================================
+// Phase 8: Analytics & Predictive Maintenance
+// ==========================================
+
+export const AnalyticsPeriodSchema = z.enum(['TODAY', 'THIS_WEEK', 'THIS_MONTH', 'CUSTOM']);
+
+export const ProfitabilityQuerySchema = z.object({
+  period: AnalyticsPeriodSchema.optional(),
+  customStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'YYYY-MM-DD format required').optional(),
+  customEnd: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'YYYY-MM-DD format required').optional(),
+  isLossOnly: z.boolean().optional(),
+  status: z.string().optional(),
+  limit: z.number().int().positive().max(200).optional(),
+});
+
+export const CreateShareLinkSchema = z.object({
+  period: AnalyticsPeriodSchema.default('THIS_MONTH'),
+  durationHours: z.number().int().positive().max(168, 'Maximum share link duration is 7 days (168 hours)').default(24),
+});
+
+export const ConvertAlertSchema = z.object({
+  priority: z.enum(['LOW', 'NORMAL', 'HIGH', 'URGENT']).optional(),
+  description: z.string().optional(),
+});
+
+export const MaintenanceCronQuerySchema = z.object({
+  referenceDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'YYYY-MM-DD format required').optional(),
+});

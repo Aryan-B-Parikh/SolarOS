@@ -28,7 +28,7 @@ export async function suggestCrewsForOrder(orderId: string, targetDateStr?: stri
 
   if (!order) throw new AppError('NOT_FOUND', 'Order not found', 404);
 
-  const targetDate = targetDateStr ? new Date(targetDateStr) : order.installation?.scheduled_date || new Date();
+  const targetDate = targetDateStr ? new Date(targetDateStr) : order.installation?.scheduled_on || new Date();
   const startOfDay = new Date(targetDate);
   startOfDay.setHours(0, 0, 0, 0);
   const endOfDay = new Date(targetDate);
@@ -37,26 +37,29 @@ export async function suggestCrewsForOrder(orderId: string, targetDateStr?: stri
   // Fetch all active technicians
   const technicians = await prisma.technician.findMany({
     include: {
-      user: true,
+      user: {
+        include: {
+          crews_led: {
+            where: {
+              scheduled_on: { gte: startOfDay, lte: endOfDay },
+              status: { in: [InstallationStatus.SCHEDULED, InstallationStatus.IN_PROGRESS] },
+            },
+          },
+        },
+      },
       leaves: {
         where: {
-          status: 'APPROVED',
-          date: { gte: startOfDay, lte: endOfDay },
+          starts_on: { lte: endOfDay },
+          ends_on: { gte: startOfDay },
         },
       },
-      led_installations: {
-        where: {
-          scheduled_date: { gte: startOfDay, lte: endOfDay },
-          status: { in: [InstallationStatus.SCHEDULED, InstallationStatus.IN_PROGRESS] },
-        },
-      },
-      crew_memberships: {
+      installation_crew: {
         include: {
           installation: true,
         },
         where: {
           installation: {
-            scheduled_date: { gte: startOfDay, lte: endOfDay },
+            scheduled_on: { gte: startOfDay, lte: endOfDay },
             status: { in: [InstallationStatus.SCHEDULED, InstallationStatus.IN_PROGRESS] },
           },
         },
@@ -73,17 +76,17 @@ export async function suggestCrewsForOrder(orderId: string, targetDateStr?: stri
 
   // Map into CandidateTechnician format
   const candidates: CandidateTechnician[] = technicians.map((t) => {
-    const weeklyHours = t.time_logs.reduce((sum, log) => {
+    const weeklyHours = t.time_logs.reduce((sum: number, log) => {
       if (log.ended_at && log.started_at) {
         return sum + (log.ended_at.getTime() - log.started_at.getTime()) / (1000 * 3600);
       }
       return sum;
     }, 0);
 
-    const jobsCount = t.led_installations.length + t.crew_memberships.length;
+    const jobsCount = t.user.crews_led.length + t.installation_crew.length;
 
     return {
-      id: t.id,
+      id: t.user_id,
       userId: t.user_id,
       name: t.user.name,
       isCrewLead: t.is_crew_lead,
@@ -157,11 +160,9 @@ export async function confirmOrderSchedule(
 
     const scheduledDate = new Date(data.scheduledDate);
 
-    // Find technician by id or user_id
+    // Find technician by user id (Technician is keyed by user_id)
     const leadTech = await tx.technician.findFirst({
-      where: {
-        OR: [{ id: data.crewLeadId }, { user_id: data.crewLeadId }],
-      },
+      where: { user_id: data.crewLeadId },
     });
 
     if (!leadTech) {
@@ -175,13 +176,13 @@ export async function confirmOrderSchedule(
         where: { id: installation.id },
         data: {
           crew_lead_id: leadTech.user_id,
-          scheduled_date: scheduledDate,
+          scheduled_on: scheduledDate,
           status: InstallationStatus.SCHEDULED,
         },
       });
 
       // Clear old memberships and recreate
-      await tx.crewMember.deleteMany({
+      await tx.installationCrew.deleteMany({
         where: { installation_id: installation.id },
       });
     } else {
@@ -189,7 +190,7 @@ export async function confirmOrderSchedule(
         data: {
           order_id: order.id,
           crew_lead_id: leadTech.user_id,
-          scheduled_date: scheduledDate,
+          scheduled_on: scheduledDate,
           status: InstallationStatus.SCHEDULED,
         },
       });
@@ -199,16 +200,16 @@ export async function confirmOrderSchedule(
     if (data.memberIds && data.memberIds.length > 0) {
       const memberTechs = await tx.technician.findMany({
         where: {
-          OR: [{ id: { in: data.memberIds } }, { user_id: { in: data.memberIds } }],
+          user_id: { in: data.memberIds },
         },
       });
 
       for (const m of memberTechs) {
-        await tx.crewMember.create({
+        await tx.installationCrew.create({
           data: {
             installation_id: installation.id,
-            technician_id: m.id,
-            role: 'HELPER',
+            technician_id: m.user_id,
+            role: 'ASSISTANT',
           },
         });
       }
@@ -242,20 +243,20 @@ export async function getScheduleGrid(startDate: Date, endDate: Date) {
     }),
     prisma.installation.findMany({
       where: {
-        scheduled_date: { gte: startDate, lte: endDate },
+        scheduled_on: { gte: startDate, lte: endDate },
       },
       include: {
         order: {
           include: { customer: true },
         },
-        crew_lead: { include: { user: true } },
-        crew_members: { include: { technician: { include: { user: true } } } },
+        crew_lead: true,
+        crew: { include: { technician: { include: { user: true } } } },
       },
     }),
     prisma.technicianLeave.findMany({
       where: {
-        date: { gte: startDate, lte: endDate },
-        status: 'APPROVED',
+        starts_on: { lte: endDate },
+        ends_on: { gte: startDate },
       },
     }),
   ]);

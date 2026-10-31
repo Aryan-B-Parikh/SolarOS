@@ -36,7 +36,7 @@ export async function GET(
     });
 
     const getSetting = (k: string, def: string) => {
-      const s = settings.find((item) => item.key === k);
+      const s = settings.find((item: { key: string; value: unknown }) => item.key === k);
       return s && typeof s.value === 'string' ? s.value : def;
     };
 
@@ -88,8 +88,8 @@ export async function GET(
         lineTotalFormatted: formatPaise(l.line_total_paise),
       })),
       savings: {
-        annualSavingsRupees: assessment?.annual_savings_rupees || 34493,
-        annualGenerationKwh: assessment?.annual_generation_kwh || 4928,
+        annualSavingsRupees: assessment ? Number(assessment.annual_savings_paise) / 100 : 34493,
+        annualGenerationKwh: assessment ? Number(assessment.annual_generation_kwh) : 4928,
         paybackYears: assessment?.payback_years ? Number(assessment.payback_years) : 4.2,
       },
       company: {

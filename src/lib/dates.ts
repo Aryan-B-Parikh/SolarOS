@@ -88,3 +88,109 @@ export function getISTMonthRange(year: number, month: number): { start: Date; en
   };
 }
 
+export type AnalyticsPeriod = 'TODAY' | 'THIS_WEEK' | 'THIS_MONTH' | 'CUSTOM';
+
+/**
+ * Returns UTC Date objects for start (00:00:00.000 IST) and end (23:59:59.999 IST) of the day.
+ */
+export function getISTDayRange(date: Date = new Date()): { start: Date; end: Date } {
+  const istDate = new Date(date.getTime() + IST_OFFSET_MS);
+  const year = istDate.getUTCFullYear();
+  const month = istDate.getUTCMonth();
+  const day = istDate.getUTCDate();
+
+  const startIST = new Date(Date.UTC(year, month, day, 0, 0, 0, 0));
+  const endIST = new Date(Date.UTC(year, month, day, 23, 59, 59, 999));
+
+  return {
+    start: new Date(startIST.getTime() - IST_OFFSET_MS),
+    end: new Date(endIST.getTime() - IST_OFFSET_MS),
+  };
+}
+
+/**
+ * Returns UTC Date objects for start (Monday 00:00:00.000 IST) and end (Sunday 23:59:59.999 IST) of the week.
+ */
+export function getISTWeekRange(date: Date = new Date()): { start: Date; end: Date } {
+  const istDate = new Date(date.getTime() + IST_OFFSET_MS);
+  const dayOfWeek = istDate.getUTCDay(); // 0 is Sunday, 1 is Monday
+  const diffToMonday = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
+
+  const year = istDate.getUTCFullYear();
+  const month = istDate.getUTCMonth();
+  const day = istDate.getUTCDate() + diffToMonday;
+
+  const startIST = new Date(Date.UTC(year, month, day, 0, 0, 0, 0));
+  const endIST = new Date(Date.UTC(year, month, day + 6, 23, 59, 59, 999));
+
+  return {
+    start: new Date(startIST.getTime() - IST_OFFSET_MS),
+    end: new Date(endIST.getTime() - IST_OFFSET_MS),
+  };
+}
+
+/**
+ * Returns UTC Date objects for calendar date strings (YYYY-MM-DD) bounded at 00:00:00 and 23:59:59.999 IST.
+ */
+export function getISTCustomRange(startDateStr: string, endDateStr: string): { start: Date; end: Date } {
+  const [sy, sm, sd] = startDateStr.split('-').map(Number);
+  const [ey, em, ed] = endDateStr.split('-').map(Number);
+
+  const startIST = new Date(Date.UTC(sy, sm - 1, sd, 0, 0, 0, 0));
+  const endIST = new Date(Date.UTC(ey, em - 1, ed, 23, 59, 59, 999));
+
+  return {
+    start: new Date(startIST.getTime() - IST_OFFSET_MS),
+    end: new Date(endIST.getTime() - IST_OFFSET_MS),
+  };
+}
+
+/**
+ * Resolves current and comparison prior periods with strict IST boundaries.
+ */
+export function getISTPeriodRanges(
+  period: AnalyticsPeriod,
+  customStart?: string,
+  customEnd?: string,
+  referenceDate: Date = new Date()
+): {
+  start: Date;
+  end: Date;
+  priorStart: Date;
+  priorEnd: Date;
+} {
+  if (period === 'TODAY') {
+    const current = getISTDayRange(referenceDate);
+    const priorRef = new Date(referenceDate.getTime() - 24 * 3600 * 1000);
+    const prior = getISTDayRange(priorRef);
+    return { ...current, priorStart: prior.start, priorEnd: prior.end };
+  }
+
+  if (period === 'THIS_WEEK') {
+    const current = getISTWeekRange(referenceDate);
+    const priorRef = new Date(referenceDate.getTime() - 7 * 24 * 3600 * 1000);
+    const prior = getISTWeekRange(priorRef);
+    return { ...current, priorStart: prior.start, priorEnd: prior.end };
+  }
+
+  if (period === 'CUSTOM' && customStart && customEnd) {
+    const current = getISTCustomRange(customStart, customEnd);
+    const durationMs = current.end.getTime() - current.start.getTime();
+    const priorEnd = new Date(current.start.getTime() - 1);
+    const priorStart = new Date(priorEnd.getTime() - durationMs);
+    return { ...current, priorStart, priorEnd };
+  }
+
+  // Default: THIS_MONTH
+  const istDate = new Date(referenceDate.getTime() + IST_OFFSET_MS);
+  const year = istDate.getUTCFullYear();
+  const month = istDate.getUTCMonth() + 1; // 1-12
+  const current = getISTMonthRange(year, month);
+
+  const priorMonth = month === 1 ? 12 : month - 1;
+  const priorYear = month === 1 ? year - 1 : year;
+  const prior = getISTMonthRange(priorYear, priorMonth);
+
+  return { ...current, priorStart: prior.start, priorEnd: prior.end };
+}
+

@@ -56,6 +56,10 @@ export interface ChallengeVerificationResult {
 
 const DEFAULT_SECRET = process.env.ACCESS_LINK_SECRET || 'sunpower-default-dev-secret-key-32chars!!';
 
+/** Cookie carrying the 30-minute verified session (see app/api/v1/portal/[token]/verify). */
+export const VERIFIED_SESSION_COOKIE_NAME = 'sunpower_portal_verified';
+export const VERIFIED_SESSION_TTL_SECONDS = 30 * 60;
+
 /**
  * Generates a 128-bit cryptographically random token (16 bytes = 32 hex chars)
  * and its corresponding SHA-256 hash.
@@ -242,6 +246,35 @@ export function verifyPhoneChallenge(
       errorMessage: errorMsg,
     };
   }
+}
+
+/**
+ * Creates the `Set-Cookie` header value for the 30-minute verified session that
+ * is granted once a customer passes the phone last-4-digits challenge.
+ *
+ * The raw link token is hashed before signing, so the cookie never contains the
+ * token that appears in the URL, and only a SHA-256 hash is stored server-side.
+ * Use with `validateVerifiedSessionToken(sessionValue, hashToken(rawToken), customerId)`.
+ */
+export function generateSessionCookie(
+  customerId: string,
+  rawToken: string,
+  secretKey: string = DEFAULT_SECRET
+): string {
+  const expiresAt = new Date(Date.now() + VERIFIED_SESSION_TTL_SECONDS * 1000);
+  const sessionToken = createVerifiedSessionToken(hashToken(rawToken), customerId, expiresAt, secretKey);
+
+  const attributes = [
+    `${VERIFIED_SESSION_COOKIE_NAME}=${sessionToken}`,
+    'Path=/',
+    `Max-Age=${VERIFIED_SESSION_TTL_SECONDS}`,
+    'HttpOnly',
+    'SameSite=Lax',
+  ];
+  if (process.env.NODE_ENV === 'production') {
+    attributes.push('Secure');
+  }
+  return attributes.join('; ');
 }
 
 /**

@@ -327,7 +327,7 @@ export async function rejectQuote(
     }
 
     if (!data.rejectReason || data.rejectReason.trim().length === 0) {
-      throw new AppError('VALIDATION_ERROR', 'A reason is required when rejecting a quotation.', 422);
+      throw new AppError('VALIDATION_FAILED', 'A reason is required when rejecting a quotation.', 422);
     }
 
     // Phone verification
@@ -394,6 +394,9 @@ export async function getQuoteByPublicToken(rawToken: string) {
 
   const now = Date.now();
   if (link) {
+    if (new Date(link.expires_at).getTime() <= now) {
+      throw new AppError('LINK_EXPIRED', 'This access link has expired.', 410);
+    }
     if (link.revoked_at && new Date(link.revoked_at).getTime() <= now) {
       throw new AppError('LINK_REVOKED', 'This access link has been revoked.', 403);
     }
@@ -421,10 +424,16 @@ export async function getQuoteByPublicToken(rawToken: string) {
     },
   });
 
-  // Fallback: If not found by token_hash on quote, check if link belongs to a customer
-  if (!quote && link && link.scope === 'QUOTE') {
+  // Fallback: a quote or portal link both grant the owning customer access to
+  // their latest customer-visible quotation.
+  if (!quote && link && (link.scope === 'QUOTE' || link.scope === 'PORTAL')) {
     quote = await prisma.quote.findFirst({
-      where: { customer_id: link.customer_id, status: { in: [QuoteStatus.SENT, QuoteStatus.ACCEPTED, QuoteStatus.REJECTED] } },
+      where: {
+        customer_id: link.customer_id,
+        status: {
+          in: [QuoteStatus.SENT, QuoteStatus.ACCEPTED, QuoteStatus.REJECTED, QuoteStatus.EXPIRED],
+        },
+      },
       include: {
         customer: true,
         lead: { include: { assessment: true } },

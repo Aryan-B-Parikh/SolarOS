@@ -7,6 +7,8 @@ import {
   extractLastFourDigits,
   verifyPhoneChallenge,
   validateVerifiedSessionToken,
+  generateSessionCookie,
+  VERIFIED_SESSION_COOKIE_NAME,
   type LinkRecord,
 } from '../../src/lib/access-links.ts';
 
@@ -94,8 +96,31 @@ describe('Customer Access Link Security Engine (TRD 2.6, D11)', () => {
     );
   });
 
-  it('locks link for 15 minutes after 5 failed attempts', () => {
-    let link: LinkRecord = {
+  it('builds a Set-Cookie header whose session token validates against the raw link token', () => {
+    const customerId = 'cust-456';
+    const rawToken = 'a'.repeat(32);
+
+    const cookie = generateSessionCookie(customerId, rawToken);
+
+    assert.match(cookie, new RegExp(`^${VERIFIED_SESSION_COOKIE_NAME}=`));
+    assert.match(cookie, /HttpOnly/);
+    assert.match(cookie, /SameSite=Lax/);
+    assert.match(cookie, /Max-Age=1800/);
+
+    const value = cookie.split(';')[0].slice(VERIFIED_SESSION_COOKIE_NAME.length + 1);
+    assert.equal(
+      validateVerifiedSessionToken(value, hashToken(rawToken), customerId),
+      true,
+      'Cookie value must validate against the hashed link token'
+    );
+    assert.equal(
+      validateVerifiedSessionToken(value, hashToken(rawToken), 'other-customer'),
+      false,
+      'Cookie must not validate for a different customer'
+    );
+  });
+
+  it('locks link for 15 minutes after 5 failed attempts', () => {    let link: LinkRecord = {
       customerId: 'cust-123',
       scope: 'PORTAL',
       tokenHash: 'sample-token-hash-123',

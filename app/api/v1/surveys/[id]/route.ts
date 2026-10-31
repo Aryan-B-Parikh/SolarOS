@@ -17,7 +17,7 @@ const UpdateSurveyDraftSchema = z.object({
 
 export const GET = createApiHandler(
   {
-    allowedRoles: ['DIRECTOR', 'SALES', 'TECHNICIAN', 'INSTALLER', 'SUPPORT', 'ACCOUNTS'],
+    allowedRoles: ['DIRECTOR', 'SALES', 'TECHNICIAN', 'SUPPORT', 'ACCOUNTS'],
   },
   async ({ req }) => {
     const url = new URL(req.url);
@@ -32,7 +32,7 @@ export const GET = createApiHandler(
 export const PUT = createApiHandler(
   {
     bodySchema: UpdateSurveyDraftSchema,
-    allowedRoles: ['DIRECTOR', 'TECHNICIAN', 'INSTALLER'],
+    allowedRoles: ['DIRECTOR', 'TECHNICIAN'],
   },
   async ({ req, body, user }) => {
     const url = new URL(req.url);
@@ -47,7 +47,7 @@ export const PUT = createApiHandler(
 export const POST = createApiHandler(
   {
     bodySchema: SubmitSurveySchema,
-    allowedRoles: ['DIRECTOR', 'SALES', 'TECHNICIAN', 'INSTALLER'],
+    allowedRoles: ['DIRECTOR', 'SALES', 'TECHNICIAN'],
   },
   async ({ req, body, user }) => {
     const url = new URL(req.url);

@@ -36,14 +36,37 @@ export default function ServiceDeskClient({
     );
   });
 
-  const handleQuickLookup = (serial: string) => {
+  const handleQuickLookup = async (serial: string) => {
     setSearchTerm(serial);
+    try {
+      const res = await fetch(`/api/v1/w/${encodeURIComponent(serial)}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.isFound) {
+          setLookupResult({
+            serial: data.serialNumber || serial,
+            product: data.productName ? `${data.productName} (${data.brand} ${data.model})` : 'Inverter',
+            customer: data.verdict === 'IN_WARRANTY' ? 'Pravinbhai Patel' : 'Bhupendra Joshi',
+            phone: data.verdict === 'IN_WARRANTY' ? '+91 90000 00022' : '+91 90000 00033',
+            startDate: data.startDate || (data.verdict === 'IN_WARRANTY' ? '2025-05-05' : '2023-03-10'),
+            endDate: data.endDate || (data.verdict === 'IN_WARRANTY' ? '2027-05-04' : '2025-03-09'),
+            daysLeft: data.remainingDays || 0,
+            verdict: data.verdict,
+            billingMode: data.verdict === 'IN_WARRANTY' ? 'WARRANTY (No Charge)' : 'CHARGEABLE (Parts & Labour)',
+          });
+          return;
+        }
+      }
+    } catch (e) {
+      // Fallback
+    }
+
     if (serial.includes('24A') || serial.includes('2025')) {
       setLookupResult({
         serial: 'INV3K-24A-001873',
         product: 'On-grid inverter 3 kW',
-        customer: 'Dr. Anand Desai',
-        phone: '+91 90000 00021',
+        customer: 'Pravinbhai Patel',
+        phone: '+91 90000 00022',
         startDate: '2025-05-05',
         endDate: '2027-05-04',
         daysLeft: 185,
@@ -52,10 +75,10 @@ export default function ServiceDeskClient({
       });
     } else {
       setLookupResult({
-        serial: 'INV3K-22C-000492',
+        serial: 'INV3K-22M-000412',
         product: 'On-grid inverter 3 kW',
-        customer: 'Kishore Joshi',
-        phone: '+91 90000 00030',
+        customer: 'Bhupendra Joshi',
+        phone: '+91 90000 00033',
         startDate: '2023-03-10',
         endDate: '2025-03-09',
         daysLeft: 0,
@@ -189,7 +212,9 @@ export default function ServiceDeskClient({
                 filteredTickets.map((t) => (
                   <tr key={t.id} className="hover:bg-slate-50">
                     <td className="px-3 py-2.5 font-mono font-bold text-blue-600">
-                      {t.ticket_number}
+                      <Link href={`/service/${t.id}`} className="hover:underline">
+                        {t.ticket_number}
+                      </Link>
                     </td>
                     <td className="px-3 py-2.5 font-medium text-slate-900">
                       {t.customer?.name}

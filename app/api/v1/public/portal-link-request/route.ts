@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import prisma from '@/lib/db';
 import { generateAccessToken } from '@/lib/access-links';
-import { createOutboxNotification } from '@/lib/outbox';
+import { queueNotification } from '@/lib/outbox';
 import { logger } from '@/lib/logger';
 
 const RequestLinkSchema = z.object({
@@ -58,18 +58,23 @@ export async function POST(req: NextRequest) {
 
     // Queue notification in transactional outbox
     const portalUrl = `${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/portal/${rawToken}`;
-    await createOutboxNotification(
-      prisma,
-      'PORTAL_LINK_DISPATCHED',
-      {
-        customerId: customer.id,
-        phone: customer.phone,
-        email: customer.email,
-        portalUrl,
-        expiresAt: expiresAt.toISOString(),
-      },
-      customer.id
-    );
+    const recipient = customer.phone || customer.email;
+    if (recipient) {
+      await queueNotification({
+        channel: customer.phone ? 'SMS' : 'EMAIL',
+        recipient,
+        template: 'PORTAL_LINK_DISPATCHED',
+        payload: {
+          customerId: customer.id,
+          phone: customer.phone,
+          email: customer.email,
+          portalUrl,
+          expiresAt: expiresAt.toISOString(),
+        },
+        // Stable key: re-requesting the same link must not send twice
+        idempotencyKey: `portal-link:${customer.id}:${tokenHash}`,
+      });
+    }
 
     logger.info('Dispatched fresh portal access link to customer', {
       customerId: customer.id,

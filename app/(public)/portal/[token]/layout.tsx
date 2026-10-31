@@ -99,6 +99,26 @@ export default async function PortalLayout({ children, params }: PortalLayoutPro
     );
   }
 
+  if (linkStatus === 'NOT_FOUND') {
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
+        <div className="max-w-md w-full bg-white rounded-2xl shadow-lg border border-slate-200 p-6 text-center">
+          <div className="w-12 h-12 bg-amber-100 text-amber-600 rounded-full flex items-center justify-center mx-auto mb-4 font-bold text-xl">🔍</div>
+          <h1 className="text-xl font-bold text-slate-800">Portal Link Not Found</h1>
+          <p className="text-slate-600 text-sm mt-2">
+            This link is invalid or has been replaced. Request a fresh secure link to access your solar project.
+          </p>
+          <a
+            href="/portal-link-request"
+            className="mt-6 inline-block w-full py-2.5 px-4 bg-amber-500 hover:bg-amber-600 text-white font-medium rounded-xl text-sm transition"
+          >
+            Request Fresh Link
+          </a>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col font-sans">
       {/* Customer Header */}

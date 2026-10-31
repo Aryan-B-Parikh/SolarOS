@@ -1,7 +1,7 @@
-import { prisma } from '@/lib/db';
-import { AppError } from '@/lib/errors';
-import { recordAudit } from '@/lib/audit';
-import { getNextSequence } from '@/lib/sequences';
+import { prisma } from '../lib/db.ts';
+import { AppError } from '../lib/errors.ts';
+import { recordAudit } from '../lib/audit.ts';
+import { getNextSequence } from '../lib/sequences.ts';
 import { InvoiceType, InvoiceStatus } from '@prisma/client';
 
 export interface CreateServiceInvoiceDto {

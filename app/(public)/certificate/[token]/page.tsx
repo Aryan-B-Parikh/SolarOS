@@ -12,13 +12,15 @@ export default async function HandoverCertificatePage({ params }: Props) {
   const rawToken = params.token;
   const tokenHash = hashToken(rawToken);
 
+  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(rawToken);
+
   let installation: any = null;
   try {
     installation = await prisma.installation.findFirst({
       where: {
         OR: [
           { certificate_token_hash: tokenHash },
-          { id: rawToken.length === 36 ? rawToken : undefined },
+          ...(isUuid ? [{ id: rawToken }] : []),
         ],
       },
       include: {
@@ -34,6 +36,47 @@ export default async function HandoverCertificatePage({ params }: Props) {
         },
       },
     });
+
+    // A customer portal link may also open the customer's handover certificate
+    // once the installation has been completed and signed off.
+    if (!installation) {
+      const link = await prisma.customerAccessLink.findUnique({
+        where: { token_hash: tokenHash },
+        select: {
+          customer_id: true,
+          scope: true,
+          expires_at: true,
+          revoked_at: true,
+        },
+      });
+
+      if (
+        link &&
+        link.scope === 'PORTAL' &&
+        !link.revoked_at &&
+        new Date(link.expires_at).getTime() > Date.now()
+      ) {
+        installation = await prisma.installation.findFirst({
+          where: {
+            order: { customer_id: link.customer_id },
+            OR: [{ status: 'COMPLETED' }, { signed_at: { not: null } }],
+          },
+          include: {
+            order: {
+              include: {
+                customer: true,
+                quote: true,
+              },
+            },
+            crew_lead: true,
+            inventory_units: {
+              include: { product: true },
+            },
+          },
+          orderBy: { created_at: 'desc' },
+        });
+      }
+    }
   } catch {
     // Graceful offline mock handling
   }
@@ -268,3 +311,4 @@ export default async function HandoverCertificatePage({ params }: Props) {
     </div>
   );
 }
+

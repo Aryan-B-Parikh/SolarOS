@@ -3,7 +3,7 @@
  * Generates exact bill of materials lines from a SystemTemplate and site parameters.
  */
 
-export type BomRule = 'FIXED' | 'PANEL_COUNT' | 'PER_PANEL' | 'PER_KW' | 'PER_CABLE_METER';
+export type BomRule = 'FIXED' | 'PANEL_COUNT' | 'PER_PANEL' | 'PER_KW' | 'PER_CABLE_METER' | 'MANUAL';
 
 export interface BomInput {
   capacityKw: number;

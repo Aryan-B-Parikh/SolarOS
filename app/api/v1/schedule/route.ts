@@ -4,7 +4,7 @@ import { getScheduleGrid } from '@/services/scheduling';
 
 export const GET = createApiHandler(
   {
-    allowedRoles: ['DIRECTOR', 'OPERATIONS', 'SALES'],
+    allowedRoles: ['DIRECTOR', 'WAREHOUSE', 'SALES'],
   },
   async ({ req }) => {
     const url = new URL(req.url);

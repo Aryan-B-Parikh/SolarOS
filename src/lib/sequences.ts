@@ -1,4 +1,4 @@
-import { prisma } from './db';
+import { prisma } from './db.ts';
 
 export async function getNextSequence(name: string, year = new Date().getFullYear(), tx?: any): Promise<string> {
   const db = tx || prisma;

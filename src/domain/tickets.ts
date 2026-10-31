@@ -3,7 +3,7 @@
  * Specification Reference: TRD 2.4, Backend Schema 5.3 & 5.4, PRD C9, Phase 7
  */
 
-import type { TicketCategory, TicketPriority } from './fault-codes.js';
+export type { TicketCategory, TicketPriority } from './fault-codes.ts';
 
 export type TicketChannel = 'PHONE' | 'WHATSAPP' | 'WEB' | 'VISIT' | 'MAINTENANCE_ALERT';
 
@@ -52,21 +52,32 @@ export const SLA_HOURS_BY_PRIORITY: Record<TicketPriority, number> = {
   LOW: 72,
 };
 
+export const SETTINGS_SLA_HOURS_BY_PRIORITY: Record<TicketPriority, number> = {
+  URGENT: 4,
+  HIGH: 24,
+  NORMAL: 72,
+  LOW: 168,
+};
+
 export const ALLOWED_TICKET_TRANSITIONS: Record<TicketStatus, TicketStatus[]> = {
-  OPEN: ['ASSIGNED', 'RESOLVED'],
-  ASSIGNED: ['IN_PROGRESS', 'OPEN', 'RESOLVED'],
-  IN_PROGRESS: ['RESOLVED', 'ASSIGNED'],
-  RESOLVED: ['CONFIRMED', 'REOPENED'],
+  OPEN: ['ASSIGNED', 'IN_PROGRESS', 'RESOLVED', 'CLOSED'],
+  ASSIGNED: ['IN_PROGRESS', 'OPEN', 'RESOLVED', 'CLOSED'],
+  IN_PROGRESS: ['RESOLVED', 'ASSIGNED', 'CLOSED'],
+  RESOLVED: ['CONFIRMED', 'REOPENED', 'CLOSED', 'IN_PROGRESS'],
   REOPENED: ['ASSIGNED', 'IN_PROGRESS'],
   CONFIRMED: ['CLOSED'],
-  CLOSED: [], // Terminal state
+  CLOSED: ['IN_PROGRESS', 'REOPENED'], // Reopening allowed
 };
 
 /**
- * Calculates the SLA due timestamp based on ticket priority.
+ * Calculates the SLA due timestamp based on ticket priority and optional custom SLA configuration.
  */
-export function calculateSlaDueDate(priority: TicketPriority, fromDate: Date = new Date()): Date {
-  const hours = SLA_HOURS_BY_PRIORITY[priority] || 48;
+export function calculateSlaDueDate(
+  priority: TicketPriority,
+  fromDate: Date = new Date(),
+  customSlaMap?: Record<string, number>
+): Date {
+  const hours = customSlaMap?.[priority] ?? SLA_HOURS_BY_PRIORITY[priority] ?? 48;
   return new Date(fromDate.getTime() + hours * 60 * 60 * 1000);
 }
 
@@ -86,8 +97,19 @@ export function determineVerdictAndBilling(
     return { verdict: 'UNKNOWN_UNIT', billingMode: 'CHARGEABLE', warrantyId: null };
   }
 
+  if (warranty.status === 'VOID') {
+    return { verdict: 'EXCLUDED', billingMode: 'CHARGEABLE', warrantyId: warranty.id };
+  }
+
+  if (warranty.status === 'TRANSFERRED') {
+    return { verdict: 'OUT_OF_WARRANTY', billingMode: 'CHARGEABLE', warrantyId: warranty.id };
+  }
+
   const end = typeof warranty.endDate === 'string' ? new Date(warranty.endDate) : warranty.endDate;
-  const isCovered = checkDate.getTime() <= end.getTime();
+  const testUtc = Date.UTC(checkDate.getUTCFullYear(), checkDate.getUTCMonth(), checkDate.getUTCDate());
+  const endUtc = Date.UTC(end.getUTCFullYear(), end.getUTCMonth(), end.getUTCDate());
+
+  const isCovered = testUtc <= endUtc;
 
   if (isCovered && warranty.status === 'ACTIVE') {
     return { verdict: 'IN_WARRANTY', billingMode: 'WARRANTY', warrantyId: warranty.id };
@@ -104,7 +126,7 @@ export function validateTicketTransition(
   current: ServiceTicketRecord,
   targetStatus: TicketStatus
 ): { valid: boolean; reason?: string } {
-  const allowed = ALLOWED_TICKET_TRANSITIONS[current.status];
+  const allowed = ALLOWED_TICKET_TRANSITIONS[current.status] || [];
   if (!allowed.includes(targetStatus)) {
     return {
       valid: false,

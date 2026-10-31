@@ -1,5 +1,5 @@
 import React from 'react';
-import { prisma } from '@/lib/db';
+import { getProjectProfitabilityList, getKpiMetrics } from '@/services/analytics';
 import Link from 'next/link';
 import { 
   BarChart3, TrendingUp, TrendingDown, DollarSign, 
@@ -13,47 +13,16 @@ import clsx from 'clsx';
 export const dynamic = 'force-dynamic';
 
 export default async function AnalyticsPage() {
-  const [orders, payments, expenses] = await Promise.all([
-    prisma.order.findMany({
-      include: {
-        customer: true,
-        expenses: true,
-      },
-      orderBy: { created_at: 'desc' },
-    }),
-    prisma.payment.findMany(),
-    prisma.expense.findMany(),
+  const [projectProfits, kpiSummary] = await Promise.all([
+    getProjectProfitabilityList(),
+    getKpiMetrics('THIS_MONTH'),
   ]);
 
-  const projectProfits = orders.map((o) => {
-    const netRevenue = o.subtotal_paise - o.discount_paise;
-    const materials = BigInt(Math.round(Number(netRevenue) * 0.62));
-    const labour = BigInt(Math.round(Number(netRevenue) * 0.08));
-    const exp = (o.expenses || []).reduce((acc: bigint, e: any) => acc + BigInt(e.amount_paise), 0n);
-    const installProfit = netRevenue - materials - labour - exp;
-    const marginPercent = netRevenue > 0n ? Number((Number(installProfit) / Number(netRevenue)) * 100).toFixed(1) : '0';
+  const totalRevenue = BigInt(kpiSummary.revenue.valuePaise);
+  const totalProfit = BigInt(kpiSummary.grossProfit.valuePaise);
+  const avgMargin = kpiSummary.margin.marginPercent;
 
-    return {
-      orderId: o.id,
-      orderNumber: o.order_number,
-      customerName: o.customer.name,
-      capacityKw: o.capacity_kw,
-      systemType: o.system_type,
-      netRevenue,
-      materials,
-      labour,
-      expenses: exp,
-      installProfit,
-      marginPercent,
-      isLoss: installProfit < 0n,
-    };
-  });
-
-  const totalRevenue = projectProfits.reduce((acc, p) => acc + p.netRevenue, 0n);
-  const totalProfit = projectProfits.reduce((acc, p) => acc + p.installProfit, 0n);
-  const avgMargin = totalRevenue > 0n ? ((Number(totalProfit) / Number(totalRevenue)) * 100).toFixed(1) : '0';
-
-  const topJobs = [...projectProfits].sort((a, b) => Number(b.installProfit) - Number(a.installProfit)).slice(0, 5);
+  const topJobs = [...projectProfits].sort((a, b) => Number(b.installProfitPaise - a.installProfitPaise)).slice(0, 5);
 
   return (
     <div className="space-y-6 max-w-7xl mx-auto pb-12">
@@ -127,15 +96,15 @@ export default async function AnalyticsPage() {
                     <Link href={`/orders/${job.orderId}`}>{job.orderNumber}</Link>
                   </td>
                   <td className="px-3 py-2.5 font-medium text-slate-900">{job.customerName}</td>
-                  <td className="px-3 py-2.5 font-semibold">{job.capacityKw} kW {job.systemType}</td>
+                  <td className="px-3 py-2.5 font-semibold text-slate-700">{job.status}</td>
                   <td className="px-3 py-2.5 text-right">
-                    <MoneyText paise={job.netRevenue} />
+                    <MoneyText paise={job.netRevenuePaise} />
                   </td>
                   <td className="px-3 py-2.5 text-right font-bold text-emerald-700">
-                    <MoneyText paise={job.installProfit} />
+                    <MoneyText paise={job.installProfitPaise} />
                   </td>
                   <td className="px-3 py-2.5 text-right font-bold text-slate-900">
-                    {job.marginPercent}%
+                    {job.marginPercent}
                   </td>
                 </tr>
               ))}
@@ -173,22 +142,22 @@ export default async function AnalyticsPage() {
                   </td>
                   <td className="px-3 py-2.5 font-medium">{p.customerName}</td>
                   <td className="px-3 py-2.5 text-right">
-                    <MoneyText paise={p.netRevenue} />
+                    <MoneyText paise={p.netRevenuePaise} />
                   </td>
                   <td className="px-3 py-2.5 text-right text-slate-500">
-                    <MoneyText paise={p.materials} />
+                    <MoneyText paise={p.materialsPaise} />
                   </td>
                   <td className="px-3 py-2.5 text-right text-slate-500">
-                    <MoneyText paise={p.labour} />
+                    <MoneyText paise={p.labourPaise} />
                   </td>
                   <td className="px-3 py-2.5 text-right text-slate-500">
-                    <MoneyText paise={p.expenses} />
+                    <MoneyText paise={p.expensesPaise} />
                   </td>
                   <td className={clsx('px-3 py-2.5 text-right font-bold', p.isLoss ? 'text-red-700' : 'text-emerald-700')}>
-                    <MoneyText paise={p.installProfit} />
+                    <MoneyText paise={p.installProfitPaise} />
                   </td>
                   <td className={clsx('px-3 py-2.5 text-right font-bold', p.isLoss ? 'text-red-700' : 'text-slate-800')}>
-                    {p.marginPercent}%
+                    {p.marginPercent}
                   </td>
                 </tr>
               ))}

@@ -32,7 +32,7 @@ export default function OrderDetailClient({ initialOrder }: OrderDetailClientPro
   const [paymentForm, setPaymentForm] = useState({
     amountRupees: Math.max(0, (Number(order.advance_required_paise) - Number(order.paid_paise)) / 100),
     method: 'UPI' as const,
-    kind: (order.paid_paise === 0n ? 'ADVANCE' : 'PART') as const,
+    kind: (order.paid_paise === 0n ? 'ADVANCE' : 'PART') as 'ADVANCE' | 'PART',
     reference: '',
     receivedOn: new Date().toISOString().slice(0, 10),
   });
@@ -40,9 +40,9 @@ export default function OrderDetailClient({ initialOrder }: OrderDetailClientPro
   // Subsidy form state
   const [subsidyForm, setSubsidyForm] = useState({
     status: (order.subsidy?.status || 'NOT_STARTED') as any,
-    applicationNumber: order.subsidy?.application_number || '',
-    sanctionedAmountRupees: order.subsidy?.sanctioned_amount_paise ? Number(order.subsidy.sanctioned_amount_paise) / 100 : 78000,
-    inspectionDate: order.subsidy?.inspection_date ? new Date(order.subsidy.inspection_date).toISOString().slice(0, 10) : '',
+    applicationNumber: order.subsidy?.application_ref || '',
+    sanctionedAmountRupees: order.subsidy?.expected_paise ? Number(order.subsidy.expected_paise) / 100 : 78000,
+    inspectionDate: order.subsidy?.submitted_on ? new Date(order.subsidy.submitted_on).toISOString().slice(0, 10) : '',
     notes: order.subsidy?.notes || '',
   });
 
@@ -307,7 +307,7 @@ export default function OrderDetailClient({ initialOrder }: OrderDetailClientPro
         <div className="p-4 rounded-xl border border-slate-200 bg-white shadow-xs space-y-2 text-xs">
           <span className="font-bold text-slate-400 uppercase tracking-wider block">Installation & Crew</span>
           <div className="text-slate-900 font-semibold">
-            Scheduled Date: {order.installation?.scheduled_date ? formatDateIST(order.installation.scheduled_date) : 'Pending Confirmation'}
+            Scheduled Date: {order.installation?.scheduled_on ? formatDateIST(order.installation.scheduled_on) : 'Pending Confirmation'}
           </div>
           <div className="text-slate-600">
             Crew Lead: {order.installation?.crew_lead?.user?.name || 'Unassigned'}
@@ -458,19 +458,19 @@ export default function OrderDetailClient({ initialOrder }: OrderDetailClientPro
             <div className="flex justify-between py-1.5 border-b border-slate-50">
               <span className="text-slate-500">National Portal App No:</span>
               <span className="font-mono font-semibold text-slate-800">
-                {order.subsidy?.application_number || 'Not Applied'}
+                {order.subsidy?.application_ref || 'Not Applied'}
               </span>
             </div>
             <div className="flex justify-between py-1.5 border-b border-slate-50">
               <span className="text-slate-500">DISCOM Inspection Date:</span>
               <span className="font-semibold text-slate-800">
-                {order.subsidy?.inspection_date ? formatDateIST(order.subsidy.inspection_date) : 'Pending Inspection'}
+                {order.subsidy?.submitted_on ? formatDateIST(order.subsidy.submitted_on) : 'Pending Inspection'}
               </span>
             </div>
             <div className="flex justify-between py-1.5 border-b border-slate-50">
               <span className="text-slate-500">Sanctioned Subsidy:</span>
               <span className="font-bold text-emerald-700">
-                <MoneyText paise={order.subsidy?.sanctioned_amount_paise} />
+                <MoneyText paise={order.subsidy?.expected_paise} />
               </span>
             </div>
             {order.subsidy?.notes && (

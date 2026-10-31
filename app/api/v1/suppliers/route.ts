@@ -13,7 +13,7 @@ const CreateSupplierSchema = z.object({
 
 export const GET = createApiHandler(
   {
-    allowedRoles: ['DIRECTOR', 'OPERATIONS', 'SALES', 'TECHNICIAN'],
+    allowedRoles: ['DIRECTOR', 'WAREHOUSE', 'SALES', 'TECHNICIAN'],
   },
   async () => {
     const suppliers = await listSuppliers();
@@ -24,7 +24,7 @@ export const GET = createApiHandler(
 export const POST = createApiHandler(
   {
     bodySchema: CreateSupplierSchema,
-    allowedRoles: ['DIRECTOR', 'OPERATIONS'],
+    allowedRoles: ['DIRECTOR', 'WAREHOUSE'],
   },
   async ({ body }) => {
     const supplier = await createSupplier(body);

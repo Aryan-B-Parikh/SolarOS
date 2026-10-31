@@ -1,4 +1,4 @@
-﻿/**
+/**
  * SunPower Ops - Camera Scanner Component
  * Phase 0 - Scanner Spike
  * Member 3: Operations Frontend
@@ -181,9 +181,9 @@ export default function Scanner({
           });
           setScannerType('native');
         } else {
-          // ZXing fallback - dynamic import
+          // ZXing fallback - dynamic import (webpackIgnore to prevent static bundling error)
           try {
-            const ZXing = await import('@aspect-run/barcode-scanner' as any).catch(
+            const ZXing = await import(/* webpackIgnore: true */ '@aspect-run/barcode-scanner' as any).catch(
               () => null
             );
             if (ZXing) {

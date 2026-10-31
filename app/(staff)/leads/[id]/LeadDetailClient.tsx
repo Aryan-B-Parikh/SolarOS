@@ -29,12 +29,12 @@ export default function LeadDetailClient({ initialLead, technicians, templates }
   // Modals state
   const [isQualifyOpen, setIsQualifyOpen] = useState(false);
   const [isSurveyModalOpen, setIsSurveyModalOpen] = useState(false);
+  const [isReviewSurveyOpen, setIsReviewSurveyOpen] = useState(false);
+  const [reviewLoading, setReviewLoading] = useState(false);
+  const [rejectReason, setRejectReason] = useState('');
   const [isCloseModalOpen, setIsCloseModalOpen] = useState(false);
   const [closeStatus, setCloseStatus] = useState<'LOST' | 'DISQUALIFIED'>('LOST');
   const [closeReason, setCloseReason] = useState('');
-  const [isReviewSurveyOpen, setIsReviewSurveyOpen] = useState(false);
-  const [rejectReason, setRejectReason] = useState('');
-  const [reviewLoading, setReviewLoading] = useState(false);
   const [noteText, setNoteText] = useState('');
 
   // Qualification form state
@@ -82,15 +82,21 @@ export default function LeadDetailClient({ initialLead, technicians, templates }
           variant: 'action' as const,
         };
       case 'SURVEY_SCHEDULED':
-        const isSurveyDone = lead.survey?.status === 'COMPLETED';
         return {
-          title: isSurveyDone ? 'Site Survey Submitted — Awaiting Review' : 'Site Survey in Progress',
-          description: isSurveyDone
-            ? 'Survey measurements completed. Review roof sizing and approve to unlock quotation.'
-            : `Survey assigned to ${lead.survey?.surveyor?.name || 'Technician'}. Review details or open survey form.`,
-          actionLabel: isSurveyDone ? 'Review & Approve Survey' : 'Review Survey (Or Open Form)',
+          title: 'Site Survey in Progress',
+          description: `Survey assigned to ${lead.survey?.surveyor?.name || 'Technician'}. Awaiting roof measurements.`,
+          actionLabel: 'Awaiting Survey',
+          disabled: true,
+          disabledReason: 'Technician must submit measurements and photos from mobile field app',
+          variant: 'warning' as const,
+        };
+      case 'SURVEY_COMPLETED':
+        return {
+          title: 'Review Survey & Sizing',
+          description: `Survey completed by ${lead.survey?.surveyor?.name || 'Technician'}. Review roof specs, tilt, and shade profile to approve sizing.`,
+          actionLabel: 'Review Survey',
           onAction: () => setIsReviewSurveyOpen(true),
-          variant: isSurveyDone ? ('success' as const) : ('action' as const),
+          variant: 'action' as const,
         };
       case 'SURVEY_APPROVED':
         return {
@@ -122,32 +128,6 @@ export default function LeadDetailClient({ initialLead, technicians, templates }
           description: `Lead is closed as ${lead.status}. Reason: ${lead.lost_reason || 'None specified'}`,
           variant: 'action' as const,
         };
-    }
-  };
-
-  const handleReviewSurvey = async (action: 'APPROVE' | 'REJECT') => {
-    if (!lead.survey?.id) return;
-    if (action === 'REJECT' && !rejectReason.trim()) {
-      alert('Please enter a rejection reason');
-      return;
-    }
-    setReviewLoading(true);
-    try {
-      const res = await fetch(`/api/v1/surveys/${lead.survey.id}/review`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action, reason: action === 'REJECT' ? rejectReason.trim() : undefined }),
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.message || 'Survey review failed');
-      }
-      setIsReviewSurveyOpen(false);
-      window.location.reload();
-    } catch (e: any) {
-      alert(e.message || 'Error reviewing survey');
-    } finally {
-      setReviewLoading(false);
     }
   };
 
@@ -237,6 +217,28 @@ export default function LeadDetailClient({ initialLead, technicians, templates }
       // Activity refresh fallback
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleReviewSurvey = async (action: 'APPROVE' | 'REJECT') => {
+    if (!lead.survey?.id) return;
+    setReviewLoading(true);
+    try {
+      const res = await fetch(`/api/v1/surveys/${lead.survey.id}/review`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action, reason: rejectReason }),
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error?.message || 'Failed to review survey');
+      }
+      setIsReviewSurveyOpen(false);
+      router.refresh();
+    } catch (err: any) {
+      alert(err.message);
+    } finally {
+      setReviewLoading(false);
     }
   };
 
@@ -729,6 +731,7 @@ export default function LeadDetailClient({ initialLead, technicians, templates }
           </div>
         </div>
       )}
+
       {/* Review Survey Modal (Phase 2 / S4) */}
       {isReviewSurveyOpen && lead.survey && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-xs">

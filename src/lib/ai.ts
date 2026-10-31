@@ -178,7 +178,9 @@ RULES:
 }
 
 /**
- * Advisory photo analysis wrapper.
+ * Advisory photo analysis using Google Gemini Multimodal Vision API.
+ * Receives rooftop photos, analyzes shading and obstructions, and returns strictly advisory observations.
+ * When GEMINI_API_KEY is not configured or in offline environments, falls back cleanly to safe defaults.
  */
 export async function analyzeSurveyPhotos(
   photoUrls: string[],
@@ -190,7 +192,79 @@ export async function analyzeSurveyPhotos(
     return generateFallbackPhotoAnalysis();
   }
 
-  // Vision analysis would be invoked here; falls back cleanly if no service is reachable
-  return generateFallbackPhotoAnalysis();
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), AI_TIMEOUT_MS);
+
+  try {
+    const promptText = `You are an expert solar installation site surveyor.
+Analyze the rooftop photo(s) and provide advisory observations.
+Return strictly a valid JSON object with the following fields:
+{
+  "shadingSources": string[] (e.g. ["Water tank to the south", "Tree canopy east side"]),
+  "obstructions": string[] (e.g. ["AC outdoor units", "Satellite dish", "Pipes"]),
+  "roofType": string (e.g. "RCC Flat Roof", "Metal Shed", "Mangalore Tile"),
+  "photoQuality": "CLEAR" | "ACCEPTABLE" | "BLURRY" | "POOR",
+  "confidence": "HIGH" | "MEDIUM" | "LOW"
+}`;
+
+    const parts: any[] = [{ text: promptText }];
+
+    // If photoUrls contain base64 data URIs, pass them directly as inlineData
+    for (const url of photoUrls.slice(0, 3)) {
+      if (url.startsWith('data:image/')) {
+        const [header, base64Data] = url.split(',');
+        const mimeType = header.match(/:(.*?);/)?.[1] || 'image/jpeg';
+        parts.push({
+          inlineData: {
+            mimeType,
+            data: base64Data,
+          },
+        });
+      } else {
+        parts.push({
+          text: `Photo reference: ${url}`,
+        });
+      }
+    }
+
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${DEFAULT_AI_MODEL}:generateContent?key=${encodeURIComponent(key)}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ parts }],
+          generationConfig: { responseMimeType: 'application/json' },
+        }),
+        signal: controller.signal,
+      }
+    );
+
+    clearTimeout(timeoutId);
+
+    if (!response.ok) {
+      return generateFallbackPhotoAnalysis();
+    }
+
+    const json = (await response.json()) as any;
+    const rawText = json?.candidates?.[0]?.content?.parts?.[0]?.text;
+    if (!rawText) return generateFallbackPhotoAnalysis();
+
+    const parsed = JSON.parse(rawText);
+    return {
+      shadingSources: Array.isArray(parsed.shadingSources) ? parsed.shadingSources : [],
+      obstructions: Array.isArray(parsed.obstructions) ? parsed.obstructions : [],
+      roofType: parsed.roofType || 'RCC_FLAT',
+      photoQuality: ['CLEAR', 'ACCEPTABLE', 'BLURRY', 'POOR'].includes(parsed.photoQuality)
+        ? parsed.photoQuality
+        : 'ACCEPTABLE',
+      confidence: ['HIGH', 'MEDIUM', 'LOW'].includes(parsed.confidence) ? parsed.confidence : 'MEDIUM',
+      isAdvisory: true,
+      fallbackUsed: false,
+    };
+  } catch {
+    clearTimeout(timeoutId);
+    return generateFallbackPhotoAnalysis();
+  }
 }
 

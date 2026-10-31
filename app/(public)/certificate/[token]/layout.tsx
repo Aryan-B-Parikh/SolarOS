@@ -52,3 +52,4 @@ export default function CertificateLayout({ children }: { children: React.ReactN
     </div>
   );
 }
+

@@ -40,7 +40,7 @@ export async function GET(req: NextRequest) {
   });
 
   const getSetting = (k: string, def: string) => {
-    const s = settings.find((item) => item.key === k);
+    const s = settings.find((item: { key: string; value: unknown }) => item.key === k);
     return s && typeof s.value === 'string' ? s.value : def;
   };
 

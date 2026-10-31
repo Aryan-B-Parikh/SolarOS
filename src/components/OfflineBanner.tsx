@@ -1,4 +1,4 @@
-﻿/**
+/**
  * SunPower Ops - Offline Banner Component
  * Phase 1 - Member 3: Operations Frontend
  * Spec: PRD 3.1 (never lose input - offline banner shows when uploads are queued)
@@ -8,7 +8,7 @@
 import { useState, useEffect } from 'react';
 import { isOnline, onOnline, onOffline, getPendingUploads, getQueuedApiCalls } from '@/lib/offline-queue';
 
-export default function OfflineBanner() {
+export function OfflineBanner() {
   const [online, setOnline] = useState(true);
   const [pendingCount, setPendingCount] = useState(0);
 
@@ -100,3 +100,5 @@ export default function OfflineBanner() {
     </div>
   );
 }
+
+export default OfflineBanner;

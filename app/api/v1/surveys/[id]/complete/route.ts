@@ -6,7 +6,7 @@ import { SubmitSurveySchema } from '@/contracts';
 export const POST = createApiHandler(
   {
     bodySchema: SubmitSurveySchema,
-    allowedRoles: ['DIRECTOR', 'SALES', 'TECHNICIAN', 'INSTALLER'],
+    allowedRoles: ['DIRECTOR', 'SALES', 'TECHNICIAN'],
   },
   async ({ req, body, user }) => {
     const url = new URL(req.url);

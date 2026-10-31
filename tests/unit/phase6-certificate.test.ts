@@ -33,3 +33,4 @@ describe('Phase 6 - Commissioning Certificate & Digital Proof (C8, Rule D11)', (
     assert.notEqual(hash, tamperedHash);
   });
 });
+

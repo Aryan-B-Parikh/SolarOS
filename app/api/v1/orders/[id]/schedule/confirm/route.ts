@@ -12,7 +12,7 @@ const ConfirmScheduleSchema = z.object({
 export const POST = createApiHandler(
   {
     bodySchema: ConfirmScheduleSchema,
-    allowedRoles: ['DIRECTOR', 'OPERATIONS', 'SALES'],
+    allowedRoles: ['DIRECTOR', 'WAREHOUSE', 'SALES'],
   },
   async ({ req, body, user }) => {
     const url = new URL(req.url);

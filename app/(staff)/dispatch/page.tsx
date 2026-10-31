@@ -1,7 +1,7 @@
 import React from 'react';
 import { prisma } from '@/lib/db';
 import Link from 'next/link';
-import { Truck, CheckCircle2, AlertTriangle, ArrowRight, Clock, ShieldCheck } from 'lucide-react';
+import { Truck, CheckCircle2, AlertTriangle, ArrowRight, Clock, ShieldCheck, Barcode } from 'lucide-react';
 import { StageChip } from '@/components/StageChip';
 import { formatDateIST } from '@/lib/dates';
 
@@ -11,7 +11,7 @@ export default async function DispatchPage() {
   const dispatches = await prisma.dispatch.findMany({
     include: {
       order: { include: { customer: true } },
-      warehouse: true,
+      from_location: true,
       lines: { include: { product: true } },
       units: true,
     },
@@ -68,7 +68,7 @@ export default async function DispatchPage() {
                       {d.order.customer.name}
                       <span className="block text-[11px] text-slate-400">{d.order.customer.city}</span>
                     </td>
-                    <td className="px-4 py-3 text-slate-600">{d.warehouse.name}</td>
+                    <td className="px-4 py-3 text-slate-600">{d.from_location.name}</td>
                     <td className="px-4 py-3 text-center">
                       <span className="font-semibold text-slate-900">{totalLoaded}</span>
                       <span className="text-slate-400"> / {totalReq} items</span>
@@ -95,4 +95,5 @@ export default async function DispatchPage() {
     </div>
   );
 }
+
 

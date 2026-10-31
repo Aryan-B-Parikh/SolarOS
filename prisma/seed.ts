@@ -1,4 +1,4 @@
-import { PrismaClient, UserRole, CustomerType, LinkScope, LeadSource, LeadStatus, SystemType, ProductCategory, WarrantyStartBasis, BomRule, FaultPriority, OrderStatus, PaymentMethod, PaymentKind, LocationType, MovementType, POStatus, UnitStatus, ScanMethod, InstallationStatus, WarrantyCoverage, WarrantyStatus, WarrantySource } from '@prisma/client';
+import { PrismaClient, UserRole, CustomerType, LinkScope, LeadSource, LeadStatus, SystemType, ProductCategory, WarrantyStartBasis, BomRule, FaultPriority, OrderStatus, QuoteStatus, PaymentMethod, PaymentKind, LocationType, MovementType, POStatus, UnitStatus, ScanMethod, InstallationStatus, WarrantyCoverage, WarrantyStatus, WarrantySource } from '@prisma/client';
 import crypto from 'crypto';
 
 const prisma = new PrismaClient();
@@ -418,11 +418,41 @@ async function main() {
   });
 
   // Dummy past order and installation for May 2025
+  const mayLead = await prisma.lead.upsert({
+    where: { lead_number: 'LD-2025-0042' },
+    create: {
+      lead_number: 'LD-2025-0042',
+      customer_id: mayCustomer.id,
+      status: LeadStatus.WON,
+      monthly_bill_paise: 350000n,
+      roof_area_sqm: 35,
+      source: LeadSource.WEB,
+    },
+    update: { status: LeadStatus.WON },
+  });
+
+  const mayQuote = await prisma.quote.upsert({
+    where: { quote_number: 'QT-2025-0042' },
+    create: {
+      quote_number: 'QT-2025-0042',
+      lead_id: mayLead.id,
+      customer_id: mayCustomer.id,
+      capacity_kw: 3.0,
+      system_type: SystemType.ON_GRID,
+      subtotal_paise: 18000000n,
+      tax_paise: 2480000n,
+      total_paise: 20480000n,
+      valid_until: new Date('2025-05-30'),
+      status: QuoteStatus.ACCEPTED,
+    },
+    update: { status: QuoteStatus.ACCEPTED },
+  });
+
   const pastOrder1 = await prisma.order.upsert({
     where: { order_number: 'SO-2025-0042' },
     create: {
       order_number: 'SO-2025-0042',
-      quote_id: crypto.randomUUID(), // placeholder unique
+      quote_id: mayQuote.id,
       customer_id: mayCustomer.id,
       status: OrderStatus.INSTALLED,
       capacity_kw: 3.0,
@@ -506,11 +536,41 @@ async function main() {
     update: { status: UnitStatus.INSTALLED, customer_id: marchCustomer.id },
   });
 
+  const marchLead = await prisma.lead.upsert({
+    where: { lead_number: 'LD-2023-0012' },
+    create: {
+      lead_number: 'LD-2023-0012',
+      customer_id: marchCustomer.id,
+      status: LeadStatus.WON,
+      monthly_bill_paise: 300000n,
+      roof_area_sqm: 30,
+      source: LeadSource.WEB,
+    },
+    update: { status: LeadStatus.WON },
+  });
+
+  const marchQuote = await prisma.quote.upsert({
+    where: { quote_number: 'QT-2023-0012' },
+    create: {
+      quote_number: 'QT-2023-0012',
+      lead_id: marchLead.id,
+      customer_id: marchCustomer.id,
+      capacity_kw: 3.0,
+      system_type: SystemType.ON_GRID,
+      subtotal_paise: 17500000n,
+      tax_paise: 2400000n,
+      total_paise: 19900000n,
+      valid_until: new Date('2023-04-10'),
+      status: QuoteStatus.ACCEPTED,
+    },
+    update: { status: QuoteStatus.ACCEPTED },
+  });
+
   const pastOrder2 = await prisma.order.upsert({
     where: { order_number: 'SO-2023-0012' },
     create: {
       order_number: 'SO-2023-0012',
-      quote_id: crypto.randomUUID(),
+      quote_id: marchQuote.id,
       customer_id: marchCustomer.id,
       status: OrderStatus.INSTALLED,
       capacity_kw: 3.0,

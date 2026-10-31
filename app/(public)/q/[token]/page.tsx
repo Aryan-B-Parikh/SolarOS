@@ -17,7 +17,7 @@ export default async function PublicQuotePage({ params }: QuotePageProps) {
   let loadError: string | null = null;
 
   try {
-    const { quote, isExpired } = await getQuoteByPublicToken(rawToken);
+    const { quote, link, isExpired } = await getQuoteByPublicToken(rawToken);
 
     // Fetch company settings
     const settings = await prisma.setting.findMany({
@@ -35,7 +35,7 @@ export default async function PublicQuotePage({ params }: QuotePageProps) {
     });
 
     const getSetting = (k: string, def: string) => {
-      const s = settings.find((item) => item.key === k);
+      const s = settings.find((item: { key: string; value: unknown }) => item.key === k);
       return s && typeof s.value === 'string' ? s.value : def;
     };
 
@@ -67,6 +67,9 @@ export default async function PublicQuotePage({ params }: QuotePageProps) {
       rejectedAt: quote.rejected_at?.toISOString() || null,
       rejectReason: quote.reject_reason || null,
       isExpired,
+      // Only a portal-scope token can link back to the portal; raw quote tokens
+      // from SMS cannot be exchanged for a portal token.
+      portalToken: link?.scope === 'PORTAL' ? rawToken : null,
       customer: {
         name: quote.customer.name,
         maskedPhone,
@@ -83,8 +86,8 @@ export default async function PublicQuotePage({ params }: QuotePageProps) {
         lineTotalFormatted: formatPaise(l.line_total_paise),
       })),
       savings: {
-        annualSavingsRupees: assessment?.annual_savings_rupees || 34493,
-        annualGenerationKwh: assessment?.annual_generation_kwh || 4928,
+        annualSavingsRupees: assessment ? Number(assessment.annual_savings_paise) / 100 : 34493,
+        annualGenerationKwh: assessment ? Number(assessment.annual_generation_kwh) : 4928,
         paybackYears: assessment?.payback_years ? Number(assessment.payback_years) : 4.2,
       },
       company: {

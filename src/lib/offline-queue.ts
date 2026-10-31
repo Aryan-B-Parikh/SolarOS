@@ -215,6 +215,27 @@ export async function clearCompletedUploads(): Promise<void> {
 }
 
 // ─── API call queue operations ───────────────────────────────────────────────
+function newIdempotencyKey(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `idem-${Date.now()}-${Math.random().toString(36).substring(2, 10)}`;
+}
+
+/**
+ * Convenience wrapper for queueing a failed/offline write request.
+ * Generates an idempotency key so the replay is safe to retry server-side.
+ */
+export async function enqueueMutation(
+  url: string,
+  method: string,
+  body: any,
+  headers: Record<string, string> = { 'Content-Type': 'application/json' },
+  idempotencyKey?: string
+): Promise<string> {
+  return queueApiCall(url, method, body, headers, idempotencyKey || newIdempotencyKey());
+}
+
 export async function queueApiCall(
   url: string,
   method: string,

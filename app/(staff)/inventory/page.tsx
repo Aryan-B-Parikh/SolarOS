@@ -1,6 +1,7 @@
 import React from 'react';
+import Link from 'next/link';
 import { prisma } from '@/lib/db';
-import { Package, AlertTriangle, ShieldCheck, Plus, Search } from 'lucide-react';
+import { Package, AlertTriangle, ShieldCheck, Plus, Search, ChevronRight, Layers } from 'lucide-react';
 import { MoneyText } from '@/components/MoneyText';
 import clsx from 'clsx';
 
@@ -25,8 +26,17 @@ export default async function InventoryPage() {
             <span>Inventory & Stock Levels (Screen S11)</span>
           </h1>
           <p className="text-sm text-slate-500 mt-1">
-            Three-state stock quantities: On Hand (physical), Reserved (confirmed orders), Available (On Hand - Reserved).
+            Three-state stock quantities: On Hand (physical), Reserved (confirmed orders), Available (On Hand - Reserved). Click any product to drill down into serialized units.
           </p>
+        </div>
+        <div className="flex items-center gap-3">
+          <Link
+            href="/purchasing/receive"
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-orange-600 text-white font-medium text-sm hover:bg-orange-700 shadow-sm transition-colors"
+          >
+            <Plus className="w-4 h-4" />
+            <span>Receive Stock</span>
+          </Link>
         </div>
       </div>
 
@@ -43,6 +53,7 @@ export default async function InventoryPage() {
               <th className="px-4 py-3 text-right font-bold">Available</th>
               <th className="px-4 py-3 text-right">Reorder Level</th>
               <th className="px-4 py-3 text-center">Status</th>
+              <th className="px-4 py-3 text-center">Action</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100 text-slate-700">
@@ -56,7 +67,12 @@ export default async function InventoryPage() {
               return (
                 <tr key={`${s.product_id}-${s.location_id}`} className="hover:bg-slate-50">
                   <td className="px-4 py-3 font-semibold text-slate-900">
-                    {s.product.name}
+                    <Link
+                      href={`/inventory/${s.product_id}`}
+                      className="hover:text-blue-600 hover:underline"
+                    >
+                      {s.product.name}
+                    </Link>
                     <span className="block text-[10px] text-slate-400 font-mono">{s.product.sku}</span>
                   </td>
                   <td className="px-4 py-3 text-slate-500">{s.product.category}</td>
@@ -79,6 +95,15 @@ export default async function InventoryPage() {
                       </span>
                     )}
                   </td>
+                  <td className="px-4 py-3 text-center">
+                    <Link
+                      href={`/inventory/${s.product_id}`}
+                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-slate-200 text-slate-700 hover:bg-slate-100 text-[11px] font-medium transition-colors"
+                    >
+                      <Layers className="w-3 h-3 text-slate-500" />
+                      <span>Units</span>
+                    </Link>
+                  </td>
                 </tr>
               );
             })}
@@ -88,4 +113,3 @@ export default async function InventoryPage() {
     </div>
   );
 }
-

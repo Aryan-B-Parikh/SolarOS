@@ -176,3 +176,4 @@ export default async function PublicWarrantyPage({ params }: Props) {
     </div>
   );
 }
+

@@ -18,7 +18,7 @@ const CreatePOSchema = z.object({
 
 export const GET = createApiHandler(
   {
-    allowedRoles: ['DIRECTOR', 'OPERATIONS', 'SALES'],
+    allowedRoles: ['DIRECTOR', 'WAREHOUSE', 'SALES'],
   },
   async () => {
     const orders = await listPurchaseOrders();
@@ -29,7 +29,7 @@ export const GET = createApiHandler(
 export const POST = createApiHandler(
   {
     bodySchema: CreatePOSchema,
-    allowedRoles: ['DIRECTOR', 'OPERATIONS'],
+    allowedRoles: ['DIRECTOR', 'WAREHOUSE'],
   },
   async ({ body, user }) => {
     const po = await createPurchaseOrder(body, user?.id);

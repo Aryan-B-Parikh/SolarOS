@@ -14,9 +14,7 @@ export default async function OrdersPage() {
       customer: true,
       quote: true,
       lines: true,
-      installation: {
-        include: { crew_lead: { include: { user: true } } },
-      },
+      installation: true,
     },
     orderBy: { created_at: 'desc' },
   });
@@ -73,7 +71,7 @@ export default async function OrdersPage() {
                       <span className="block text-[11px] text-slate-400 font-normal">{o.customer.phone}</span>
                     </td>
                     <td className="px-4 py-3 font-semibold">
-                      {o.capacity_kw} kW {o.system_type === 'OFF_GRID' ? 'Off-Grid' : 'On-Grid'}
+                      {Number(o.capacity_kw)} kW {o.system_type === 'OFF_GRID' ? 'Off-Grid' : 'On-Grid'}
                     </td>
                     <td className="px-4 py-3 text-right font-bold text-slate-900">
                       <MoneyText paise={o.total_paise} />
@@ -88,7 +86,7 @@ export default async function OrdersPage() {
                       <StageChip stage={o.status} />
                     </td>
                     <td className="px-4 py-3 text-slate-600">
-                      {o.installation?.scheduled_date ? formatDateIST(o.installation.scheduled_date) : 'Pending Schedule'}
+                      {o.installation?.scheduled_on ? formatDateIST(o.installation.scheduled_on) : 'Pending Schedule'}
                     </td>
                     <td className="px-4 py-3 text-right">
                       <Link

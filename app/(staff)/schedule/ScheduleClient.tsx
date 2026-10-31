@@ -53,11 +53,11 @@ export default function ScheduleClient({
   // Filter installations for the selected week
   const getJobsForCell = (techUserId: string, dateStr: string) => {
     return installations.filter((inst) => {
-      if (!inst.scheduled_date) return false;
-      const instDate = new Date(inst.scheduled_date).toISOString().slice(0, 10);
+      if (!inst.scheduled_on) return false;
+      const instDate = new Date(inst.scheduled_on).toISOString().slice(0, 10);
       if (instDate !== dateStr) return false;
       const isLead = inst.crew_lead_id === techUserId;
-      const isMember = inst.crew_members?.some((m: any) => m.technician_id === techUserId);
+      const isMember = inst.crew?.some((m: any) => m.technician_id === techUserId);
       return isLead || isMember;
     });
   };
@@ -276,7 +276,7 @@ export default function ScheduleClient({
                     Location: {selectedJob.order?.customer?.city}, PIN {selectedJob.order?.customer?.pincode}
                   </div>
                   <div className="text-slate-500">
-                    Scheduled Date: {formatDateIST(selectedJob.scheduled_date)}
+                    Scheduled Date: {formatDateIST(selectedJob.scheduled_on)}
                   </div>
                 </div>
               )}

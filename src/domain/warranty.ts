@@ -1,12 +1,12 @@
 /**
- * SunPower Ops - Deterministic Warranty Engine (TRD 2.4, FR-5.6, PRD C7, ADR D8)
+ * SunPower Ops - Deterministic Warranty Engine (TRD 2.4, FR-5.6, PRD C7, ADR D5, ADR D8)
  * Pure domain logic for warranty start bases, calculation of end dates, leap-year handling,
  * eligibility verdicts, and replacement transfer chains.
  */
 
 import { calculateWarrantyEndDate } from '../lib/dates.ts';
 
-export type WarrantyStartBasis = 'DELIVERY' | 'COMMISSIONING';
+export type WarrantyStartBasis = 'DELIVERY' | 'COMMISSIONING' | 'INSTALLATION_SIGNOFF';
 
 export type WarrantyStatusType = 'ACTIVE' | 'EXPIRED' | 'TRANSFERRED' | 'VOID';
 
@@ -31,17 +31,19 @@ export interface WarrantyEligibilityInput {
   isVoided?: boolean;
 }
 
-export type WarrantyVerdict = 'IN_WARRANTY' | 'OUT_OF_WARRANTY' | 'EXCLUDED';
+export type WarrantyVerdict = 'IN_WARRANTY' | 'OUT_OF_WARRANTY' | 'EXCLUDED' | 'UNKNOWN_UNIT';
 
 /**
  * Calculates start and end dates based on company policy start basis.
+ * Start date is either delivery confirmation (DELIVERY) or installation sign-off (COMMISSIONING / INSTALLATION_SIGNOFF).
+ * End date = start date + product warranty months - 1 day.
  */
 export function calculateWarrantyPeriod(input: WarrantyCalculationInput): WarrantyCalculationResult {
   let effectiveStartDate: Date;
 
-  if (input.startBasis === 'COMMISSIONING') {
+  if (input.startBasis === 'COMMISSIONING' || input.startBasis === 'INSTALLATION_SIGNOFF') {
     if (!input.commissioningDate) {
-      throw new Error('Commissioning date is required when warranty start basis is COMMISSIONING');
+      throw new Error('Commissioning date is required when warranty start basis is INSTALLATION_SIGNOFF');
     }
     effectiveStartDate = typeof input.commissioningDate === 'string'
       ? new Date(input.commissioningDate)
@@ -68,7 +70,11 @@ export function calculateWarrantyPeriod(input: WarrantyCalculationInput): Warran
 
 /**
  * Evaluates whether a unit is in warranty on a specific test date.
- * Exactly adheres to: On end date -> IN_WARRANTY; Day after end date -> OUT_OF_WARRANTY.
+ * Exactly adheres to:
+ * - On end date -> IN_WARRANTY
+ * - Day after end date -> OUT_OF_WARRANTY
+ * - VOID or isVoided -> EXCLUDED
+ * - TRANSFERRED -> OUT_OF_WARRANTY
  */
 export function evaluateWarrantyEligibility(input: WarrantyEligibilityInput): {
   verdict: WarrantyVerdict;
@@ -78,6 +84,14 @@ export function evaluateWarrantyEligibility(input: WarrantyEligibilityInput): {
   if (input.isVoided || input.status === 'VOID') {
     return {
       verdict: 'EXCLUDED',
+      remainingDays: 0,
+      isCovered: false,
+    };
+  }
+
+  if (input.status === 'TRANSFERRED') {
+    return {
+      verdict: 'OUT_OF_WARRANTY',
       remainingDays: 0,
       isCovered: false,
     };
@@ -109,8 +123,9 @@ export function evaluateWarrantyEligibility(input: WarrantyEligibilityInput): {
 }
 
 /**
- * Handles replacement unit warranty transfer (Rule C9).
+ * Handles replacement unit warranty transfer (Rule C9, ADR D5).
  * Replacement keeps the original end date; parent warranty becomes TRANSFERRED.
+ * Original record is never deleted.
  */
 export function transferWarrantyToReplacement(
   originalWarranty: { id: string; endDate: string; months: number },

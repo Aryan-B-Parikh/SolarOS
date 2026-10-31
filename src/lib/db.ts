@@ -1,4 +1,5 @@
 import { createRequire } from 'module';
+import type { PrismaClient as PrismaClientType } from '@prisma/client';
 
 const require = createRequire(import.meta.url);
 
@@ -34,7 +35,7 @@ declare global {
   var __prisma: any | undefined;
 }
 
-export const prisma =
+export const prisma: PrismaClientType =
   globalThis.__prisma ||
   new PrismaClientClass({
     log: process.env.NODE_ENV === 'development' ? ['warn', 'error'] : ['error'],

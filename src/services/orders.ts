@@ -17,7 +17,7 @@ export async function getOrders(filters?: { status?: OrderStatus; customerId?: s
       payments: true,
       lines: { include: { product: true } },
       installation: {
-        include: { crew_lead: { include: { user: true } } },
+        include: { crew_lead: true },
       },
     },
     orderBy: { created_at: 'desc' },
@@ -50,8 +50,8 @@ export async function getOrderById(id: string) {
       },
       installation: {
         include: {
-          crew_lead: { include: { user: true } },
-          crew_members: { include: { technician: { include: { user: true } } } },
+          crew_lead: true,
+          crew: { include: { technician: { include: { user: true } } } },
           time_logs: true,
         },
       },
@@ -190,7 +190,7 @@ export async function confirmOrder(orderId: string, overrideByUserId?: string, e
       data: {
         order_id: order.id,
         crew_lead_id: defaultLead ? defaultLead.user_id : null,
-        scheduled_date: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000), // Default 3 days ahead
+        scheduled_on: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000), // Default 3 days ahead
         status: InstallationStatus.SCHEDULED,
       },
     });
@@ -231,7 +231,7 @@ export async function confirmOrder(orderId: string, overrideByUserId?: string, e
         payload: {
           orderNumber: order.order_number,
           customerName: order.customer.name,
-          scheduledDate: installation.scheduled_date,
+          scheduledDate: installation.scheduled_on,
         },
         idempotency_key: `order-confirm-${order.id}`,
       },
@@ -262,17 +262,17 @@ export async function updateSubsidyChecklist(
       create: {
         order_id: orderId,
         status: data.status as any,
-        application_number: data.applicationNumber || null,
-        inspection_date: data.inspectionDate ? new Date(data.inspectionDate) : null,
-        sanctioned_amount_paise: data.sanctionedAmountRupees ? BigInt(data.sanctionedAmountRupees * 100) : null,
+        application_ref: data.applicationNumber || null,
+        submitted_on: data.inspectionDate ? new Date(data.inspectionDate) : null,
+        expected_paise: data.sanctionedAmountRupees ? BigInt(Math.round(data.sanctionedAmountRupees * 100)) : 0n,
         disbursed_on: data.disbursedOn ? new Date(data.disbursedOn) : null,
         notes: data.notes || null,
       },
       update: {
         status: data.status as any,
-        application_number: data.applicationNumber || undefined,
-        inspection_date: data.inspectionDate ? new Date(data.inspectionDate) : undefined,
-        sanctioned_amount_paise: data.sanctionedAmountRupees ? BigInt(data.sanctionedAmountRupees * 100) : undefined,
+        application_ref: data.applicationNumber || undefined,
+        submitted_on: data.inspectionDate ? new Date(data.inspectionDate) : undefined,
+        expected_paise: data.sanctionedAmountRupees ? BigInt(Math.round(data.sanctionedAmountRupees * 100)) : undefined,
         disbursed_on: data.disbursedOn ? new Date(data.disbursedOn) : undefined,
         notes: data.notes || undefined,
       },
@@ -313,7 +313,7 @@ export async function cancelOrder(orderId: string, reason: string, actorId?: str
 
     if (!order) throw new AppError('NOT_FOUND', 'Order not found', 404);
 
-    if (order.status === OrderStatus.COMPLETED) {
+    if (order.status === OrderStatus.CLOSED) {
       throw new AppError('CONFLICT', 'Cannot cancel a completed installation order.', 409);
     }
     if (order.status === OrderStatus.CANCELLED) {
@@ -343,7 +343,7 @@ export async function cancelOrder(orderId: string, reason: string, actorId?: str
         // Mark allocation cancelled
         await tx.stockAllocation.update({
           where: { id: alloc.id },
-          data: { status: AllocationStatus.CANCELLED },
+          data: { status: AllocationStatus.RELEASED },
         });
       }
 
@@ -368,7 +368,7 @@ export async function cancelOrder(orderId: string, reason: string, actorId?: str
     if (order.installation && order.installation.status === InstallationStatus.SCHEDULED) {
       await tx.installation.update({
         where: { id: order.installation.id },
-        data: { status: InstallationStatus.CANCELLED },
+        data: { status: InstallationStatus.ON_HOLD, hold_reason: 'Order cancelled' },
       });
     }
 

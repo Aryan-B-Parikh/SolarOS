@@ -1,6 +1,9 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 
+// Health must be evaluated per request, never prerendered at build time.
+export const dynamic = 'force-dynamic';
+
 export async function GET() {
   const startTime = Date.now();
   let dbStatus = 'healthy';

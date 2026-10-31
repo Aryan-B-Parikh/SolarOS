@@ -1,7 +1,8 @@
 import { prisma } from '@/lib/db';
 import { AppError } from '@/lib/errors';
 import { recordAudit } from '@/lib/audit';
-import { POStatus } from '@prisma/client';
+import { POStatus, MovementType, UnitStatus } from '@prisma/client';
+import { randomBytes } from 'crypto';
 
 export async function listSuppliers() {
   const suppliers = await prisma.supplier.findMany({
@@ -135,7 +136,7 @@ export async function createPurchaseOrder(
     if (user) creatorId = user.id;
   }
   if (!creatorId) {
-    throw new AppError('UNAUTHORIZED', 'User not authenticated', 401);
+    throw new AppError('UNAUTHENTICATED', 'User not authenticated', 401);
   }
 
   const now = new Date();
@@ -182,5 +183,303 @@ export async function createPurchaseOrder(
     );
 
     return po;
+  });
+}
+
+export interface ReceiveLineItem {
+  productId: string;
+  qty: number;
+  unitCostPaise: number;
+  poLineId?: string;
+  serialNumbers?: string[];
+}
+
+export interface ReceiveGoodsInput {
+  receiptNumber?: string;
+  supplierId?: string;
+  poId?: string;
+  supplierInvoiceRef?: string;
+  locationId: string;
+  receivedOn?: string | Date;
+  lines: ReceiveLineItem[];
+  actorId?: string;
+}
+
+/**
+ * Phase 5 - Stock Receipt with Serial Capture, Unit Creation, Movements, and Weighted Average Cost
+ * (Spec 6.3 Phase 5, TRD 2.4, ADR D2, D4)
+ */
+export async function receiveGoods(input: ReceiveGoodsInput) {
+  if (!input.lines || input.lines.length === 0) {
+    throw new AppError('VALIDATION_FAILED', 'At least one line item is required for stock receipt', 400);
+  }
+  if (!input.locationId) {
+    throw new AppError('VALIDATION_FAILED', 'Destination stock location is required', 400);
+  }
+
+  let actorId = input.actorId;
+  if (!actorId) {
+    const defaultUser = await prisma.user.findFirst();
+    if (defaultUser) actorId = defaultUser.id;
+  }
+  if (!actorId) {
+    throw new AppError('UNAUTHENTICATED', 'User not authenticated', 401);
+  }
+
+  return prisma.$transaction(async (tx) => {
+    // 1. Verify destination stock location
+    const location = await tx.stockLocation.findUnique({
+      where: { id: input.locationId },
+    });
+    if (!location) {
+      throw new AppError('NOT_FOUND', 'Stock location not found', 404);
+    }
+
+    // 2. Validate products & serial numbers
+    for (const line of input.lines) {
+      if (line.qty <= 0) {
+        throw new AppError('VALIDATION_FAILED', 'Receipt quantity must be greater than zero', 400);
+      }
+
+      const product = await tx.product.findUnique({
+        where: { id: line.productId },
+      });
+      if (!product) {
+        throw new AppError('NOT_FOUND', `Product not found: ${line.productId}`, 404);
+      }
+
+      if (product.is_serialized) {
+        if (!line.serialNumbers || line.serialNumbers.length !== line.qty) {
+          throw new AppError(
+            'SERIAL_REQUIRED',
+            `Product ${product.name} is serialized: exactly ${line.qty} serial number(s) required`,
+            400
+          );
+        }
+
+        // Check for duplicates within the current submission
+        const serialSet = new Set(line.serialNumbers.map((s) => s.trim().toUpperCase()));
+        if (serialSet.size !== line.serialNumbers.length) {
+          throw new AppError('DUPLICATE_SERIAL', 'Duplicate serial number within the receipt payload', 409);
+        }
+
+        // Check for existing units in the database
+        const existingUnit = await tx.inventoryUnit.findFirst({
+          where: {
+            product_id: line.productId,
+            serial_number: { in: Array.from(serialSet) },
+          },
+        });
+        if (existingUnit) {
+          throw new AppError(
+            'DUPLICATE_SERIAL',
+            `Serial number already exists for product ${product.name}: ${existingUnit.serial_number}`,
+            409
+          );
+        }
+      }
+    }
+
+    // 3. Generate receipt number if not provided
+    const now = new Date();
+    const receivedOn = input.receivedOn ? new Date(input.receivedOn) : now;
+    let receiptNumber = input.receiptNumber;
+    if (!receiptNumber) {
+      const year = now.getFullYear();
+      const count = await tx.purchaseReceipt.count();
+      receiptNumber = `RCV-${year}-${String(count + 1).padStart(4, '0')}`;
+    }
+
+    // Compute total paise
+    let totalPaise = 0n;
+    for (const line of input.lines) {
+      totalPaise += BigInt(Math.round(line.qty * line.unitCostPaise));
+    }
+
+    // 4. Create PurchaseReceipt
+    const receipt = await tx.purchaseReceipt.create({
+      data: {
+        receipt_number: receiptNumber,
+        supplier_id: input.supplierId || null,
+        po_id: input.poId || null,
+        supplier_invoice_ref: input.supplierInvoiceRef || null,
+        received_on: receivedOn,
+        location_id: input.locationId,
+        total_paise: totalPaise,
+        created_by: actorId!,
+      },
+    });
+
+    const createdUnits: Array<{ id: string; serialNumber: string; qrCode: string }> = [];
+
+    // 5. Process each line: lines, units, stock levels & weighted average cost, movements
+    for (const line of input.lines) {
+      const receiptLine = await tx.purchaseReceiptLine.create({
+        data: {
+          receipt_id: receipt.id,
+          po_line_id: line.poLineId || null,
+          product_id: line.productId,
+          qty: line.qty,
+          unit_cost_paise: BigInt(line.unitCostPaise),
+        },
+      });
+
+      // Update PO line received quantity if attached to a PO
+      if (line.poLineId) {
+        await tx.purchaseOrderLine.update({
+          where: { id: line.poLineId },
+          data: {
+            qty_received: { increment: line.qty },
+          },
+        });
+      }
+
+      // Create serialized inventory units if product is serialized
+      if (line.serialNumbers && line.serialNumbers.length > 0) {
+        for (const rawSerial of line.serialNumbers) {
+          const serial = rawSerial.trim().toUpperCase();
+          const qrCode = `QR-${serial}-${randomBytes(4).toString('hex').toUpperCase()}`;
+
+          const unit = await tx.inventoryUnit.create({
+            data: {
+              product_id: line.productId,
+              serial_number: serial,
+              qr_code: qrCode,
+              status: UnitStatus.IN_STOCK,
+              location_id: input.locationId,
+              receipt_line_id: receiptLine.id,
+              unit_cost_paise: BigInt(line.unitCostPaise),
+            },
+          });
+
+          createdUnits.push({
+            id: unit.id,
+            serialNumber: unit.serial_number,
+            qrCode: unit.qr_code,
+          });
+
+          // Unit creation movement
+          await tx.stockMovement.create({
+            data: {
+              product_id: line.productId,
+              unit_id: unit.id,
+              qty: 1,
+              to_location_id: input.locationId,
+              type: MovementType.RECEIPT,
+              unit_cost_paise: BigInt(line.unitCostPaise),
+              ref_type: 'purchase_receipt',
+              ref_id: receipt.id,
+              reason: `Stock receipt ${receiptNumber} serial ${serial}`,
+              created_by: actorId!,
+            },
+          });
+        }
+      } else {
+        // Non-serialized movement
+        await tx.stockMovement.create({
+          data: {
+            product_id: line.productId,
+            qty: line.qty,
+            to_location_id: input.locationId,
+            type: MovementType.RECEIPT,
+            unit_cost_paise: BigInt(line.unitCostPaise),
+            ref_type: 'purchase_receipt',
+            ref_id: receipt.id,
+            reason: `Stock receipt ${receiptNumber}`,
+            created_by: actorId!,
+          },
+        });
+      }
+
+      // 6. Update StockLevel with Weighted Average Cost (WAC)
+      const currentLevel = await tx.stockLevel.findUnique({
+        where: {
+          product_id_location_id: {
+            product_id: line.productId,
+            location_id: input.locationId,
+          },
+        },
+      });
+
+      if (currentLevel) {
+        const oldOnHand = Number(currentLevel.on_hand);
+        const oldAvgCost = currentLevel.avg_cost_paise;
+        const newOnHand = oldOnHand + line.qty;
+
+        // WAC formula: (oldOnHand * oldAvgCost + incomingQty * incomingCost) / newOnHand
+        let newAvgCostPaise = BigInt(line.unitCostPaise);
+        if (newOnHand > 0) {
+          const totalExistingVal = BigInt(Math.round(oldOnHand)) * oldAvgCost;
+          const totalIncomingVal = BigInt(Math.round(line.qty)) * BigInt(line.unitCostPaise);
+          newAvgCostPaise = (totalExistingVal + totalIncomingVal) / BigInt(Math.round(newOnHand));
+        }
+
+        await tx.stockLevel.update({
+          where: {
+            product_id_location_id: {
+              product_id: line.productId,
+              location_id: input.locationId,
+            },
+          },
+          data: {
+            on_hand: { increment: line.qty },
+            avg_cost_paise: newAvgCostPaise,
+          },
+        });
+      } else {
+        await tx.stockLevel.create({
+          data: {
+            product_id: line.productId,
+            location_id: input.locationId,
+            on_hand: line.qty,
+            reserved: 0,
+            avg_cost_paise: BigInt(line.unitCostPaise),
+          },
+        });
+      }
+    }
+
+    // 7. If receiving against a PurchaseOrder, evaluate overall PO completion status
+    if (input.poId) {
+      const po = await tx.purchaseOrder.findUnique({
+        where: { id: input.poId },
+        include: { lines: true },
+      });
+
+      if (po) {
+        const allCompleted = po.lines.every((l) => Number(l.qty_received) >= Number(l.qty_ordered));
+        const newStatus = allCompleted ? POStatus.RECEIVED : POStatus.PARTIAL;
+
+        await tx.purchaseOrder.update({
+          where: { id: po.id },
+          data: { status: newStatus },
+        });
+      }
+    }
+
+    // 8. Record audit trail
+    await recordAudit(
+      {
+        actorType: 'USER',
+        actorId: actorId!,
+        entityType: 'PURCHASE_RECEIPT',
+        entityId: receipt.id,
+        action: 'GOODS_RECEIVED',
+        after: {
+          receiptNumber,
+          lineCount: input.lines.length,
+          unitsCreated: createdUnits.length,
+          totalPaise: Number(totalPaise),
+        },
+      },
+      tx
+    );
+
+    return {
+      receiptId: receipt.id,
+      receiptNumber: receipt.receipt_number,
+      totalPaise: Number(totalPaise),
+      units: createdUnits,
+    };
   });
 }

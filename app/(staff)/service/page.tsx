@@ -18,7 +18,7 @@ export default async function ServiceDeskPage() {
       include: {
         customer: true,
         warranty: true,
-        assigned_user: { select: { name: true } },
+        assignee: { select: { name: true } },
       },
       orderBy: { created_at: 'desc' },
       take: 20,

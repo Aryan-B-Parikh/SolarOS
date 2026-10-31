@@ -17,6 +17,19 @@ export default function HomePage() {
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-6 text-left">
           <Link
+            href="/portal"
+            className="p-5 rounded-xl border border-emerald-500/30 bg-emerald-950/20 hover:border-emerald-500 hover:bg-emerald-950/40 transition block group sm:col-span-2"
+          >
+            <div className="font-semibold text-emerald-400 group-hover:text-emerald-300 flex items-center justify-between">
+              <span>Customer Portal & Warranty Tracker</span>
+              <ArrowRight className="w-4 h-4" />
+            </div>
+            <p className="text-xs text-slate-300 mt-2">
+              Already have solar installed? Track your 20-year panel warranty, inverter serials, generation savings, and submit free service requests.
+            </p>
+          </Link>
+
+          <Link
             href="/enquiry"
             className="p-5 rounded-xl border border-slate-800 bg-slate-900/60 hover:border-amber-500/50 hover:bg-slate-800 transition block group"
           >

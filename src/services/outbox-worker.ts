@@ -19,6 +19,11 @@ export interface OutboxProcessResult {
  * Dispatches a single outbox message to the provider.
  * In production/sandbox, formats cleanly and logs securely without exposing customer PII.
  */
+/**
+ * Dispatches a single outbox message to the provider.
+ * Supports live MSG91 (SMS), Twilio (WhatsApp), and Resend (Email),
+ * falling back cleanly to simulated sandbox mode when production credentials are not configured.
+ */
 async function dispatchMessageToProvider(record: {
   id: string;
   channel: string;
@@ -32,9 +37,91 @@ async function dispatchMessageToProvider(record: {
       return { success: false, error: 'Simulated carrier delivery failure' };
     }
 
-    // Provider integration simulation (e.g. Twilio / Gupshup / SendGrid)
+    const channel = record.channel.toUpperCase();
+
+    // 1. Live SMS Dispatch via MSG91
+    if (channel === 'SMS' && process.env.MSG91_AUTH_KEY) {
+      const templateId = process.env.MSG91_TEMPLATE_ID || record.template;
+      const res = await fetch('https://control.msg91.com/api/v5/flow/', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          authkey: process.env.MSG91_AUTH_KEY,
+        },
+        body: JSON.stringify({
+          template_id: templateId,
+          short_url: '0',
+          recipients: [
+            {
+              mobiles: record.recipient.replace(/\D/g, ''),
+              ...(record.payload || {}),
+            },
+          ],
+        }),
+      });
+
+      if (!res.ok) {
+        const errText = await res.text();
+        return { success: false, error: `MSG91 Error: ${errText}` };
+      }
+      const data = await res.json() as any;
+      return { success: true, providerId: data.message || `msg91_${record.id.slice(0, 8)}` };
+    }
+
+    // 2. Live WhatsApp Dispatch via Twilio
+    if (channel === 'WHATSAPP' && process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN) {
+      const auth = Buffer.from(`${process.env.TWILIO_ACCOUNT_SID}:${process.env.TWILIO_AUTH_TOKEN}`).toString('base64');
+      const fromNumber = process.env.TWILIO_WHATSAPP_NUMBER || '+14155238886';
+      const cleanPhone = record.recipient.startsWith('+') ? record.recipient : `+91${record.recipient.replace(/\D/g, '')}`;
+
+      const params = new URLSearchParams();
+      params.append('From', `whatsapp:${fromNumber}`);
+      params.append('To', `whatsapp:${cleanPhone}`);
+      params.append('Body', record.payload?.message || record.payload?.text || `SolarOS Alert: ${record.template}`);
+
+      const res = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${process.env.TWILIO_ACCOUNT_SID}/Messages.json`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Basic ${auth}`,
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: params.toString(),
+      });
+
+      if (!res.ok) {
+        const err = await res.json() as any;
+        return { success: false, error: `Twilio Error: ${err.message || 'WhatsApp send failure'}` };
+      }
+      const data = await res.json() as any;
+      return { success: true, providerId: data.sid };
+    }
+
+    // 3. Live Email Dispatch via Resend
+    if (channel === 'EMAIL' && process.env.RESEND_API_KEY) {
+      const res = await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
+        },
+        body: JSON.stringify({
+          from: process.env.EMAIL_FROM || 'SunPower Ops <notifications@sunpower.in>',
+          to: [record.recipient],
+          subject: record.payload?.subject || 'SunPower System Update',
+          html: record.payload?.body || record.payload?.html || `<p>${record.template}</p>`,
+        }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json() as any;
+        return { success: false, error: `Resend Error: ${err.message || 'Email delivery failed'}` };
+      }
+      const data = await res.json() as any;
+      return { success: true, providerId: data.id };
+    }
+
+    // 4. Development / Sandbox Fallback Mode
     const providerId = `msg_${record.channel.toLowerCase()}_${crypto.randomBytes(8).toString('hex')}`;
-    
     return {
       success: true,
       providerId,
@@ -124,3 +211,4 @@ export async function processOutboxQueue(batchSize: number = 20): Promise<Outbox
 
   return result;
 }
+

@@ -120,13 +120,29 @@ export default function LeadBoardClient({ salesUsers, initialLeads }: LeadBoardC
   const getSourceIcon = (source: string) => {
     switch (source) {
       case 'WEB':
-        return <Globe className="w-3.5 h-3.5 text-blue-500" title="Web Form" />;
+        return (
+          <span title="Web Form">
+            <Globe className="w-3.5 h-3.5 text-blue-500" />
+          </span>
+        );
       case 'WHATSAPP':
-        return <MessageSquare className="w-3.5 h-3.5 text-emerald-500" title="WhatsApp Enquiry" />;
+        return (
+          <span title="WhatsApp Enquiry">
+            <MessageSquare className="w-3.5 h-3.5 text-emerald-500" />
+          </span>
+        );
       case 'PHONE':
-        return <PhoneCall className="w-3.5 h-3.5 text-indigo-500" title="Phone Call" />;
+        return (
+          <span title="Phone Call">
+            <PhoneCall className="w-3.5 h-3.5 text-indigo-500" />
+          </span>
+        );
       default:
-        return <User className="w-3.5 h-3.5 text-slate-400" title={source} />;
+        return (
+          <span title={source}>
+            <User className="w-3.5 h-3.5 text-slate-400" />
+          </span>
+        );
     }
   };
 

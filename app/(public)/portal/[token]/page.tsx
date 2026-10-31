@@ -32,6 +32,9 @@ export default async function CustomerPortalPage({ params }: PortalPageProps) {
               take: 1,
             },
             quotes: {
+              where: {
+                status: { in: ['SENT', 'ACCEPTED', 'REJECTED', 'EXPIRED'] },
+              },
               include: { lines: { include: { product: true } } },
               orderBy: { version: 'desc' },
               take: 1,
@@ -82,6 +85,9 @@ export default async function CustomerPortalPage({ params }: PortalPageProps) {
   if (warranties.length > 0) {
     currentStageIndex = 6; // Handover & Warranty active
     nextStepMessage = 'Your system is active and generating clean power under full SunPower warranty protection.';
+  } else if (currentOrder?.status === 'CLOSED') {
+    currentStageIndex = 6; // Project closed, warranty & service phase
+    nextStepMessage = 'Project closed: your system is commissioned and covered by SunPower warranty and service support.';
   } else if (currentOrder?.status === 'INSTALLED') {
     currentStageIndex = 5; // Installed
     nextStepMessage = 'Installation completed! Final handover documentation and commissioning certificate are verified.';
@@ -122,7 +128,7 @@ export default async function CustomerPortalPage({ params }: PortalPageProps) {
   let advancePaidPaise = 0n;
   if (currentOrder?.payments) {
     for (const p of currentOrder.payments) {
-      if (p.status === 'CONFIRMED') {
+      if (p.status === 'VERIFIED') {
         advancePaidPaise += BigInt(p.amount_paise);
       }
     }
@@ -131,6 +137,18 @@ export default async function CustomerPortalPage({ params }: PortalPageProps) {
   const isAdvanceReceived = advancePaidPaise >= advanceRequiredPaise && advanceRequiredPaise > 0n;
   const installation = currentOrder?.installation;
   const scheduledDateFormatted = installation?.scheduled_on ? formatDateIST(installation.scheduled_on) : null;
+
+  const isCertificateIssued =
+    !!installation && (installation.status === 'COMPLETED' || !!installation.signed_at);
+  const warrantyWithQr = warranties.find((w: any) => w.unit?.qr_code);
+  const assessment = currentLead?.assessment;
+  const annualSavingsRupees = assessment ? Number(assessment.annual_savings_paise) / 100 : null;
+  const requestedCapacity = currentLead?.requested_capacity_kw
+    ? Number(currentLead.requested_capacity_kw)
+    : null;
+  const requestedSystemType = currentLead?.system_type_pref
+    ? String(currentLead.system_type_pref).replace('_', ' ')
+    : null;
 
   return (
     <div className="space-y-6">
@@ -272,25 +290,62 @@ export default async function CustomerPortalPage({ params }: PortalPageProps) {
           <div>
             <div className="flex items-center justify-between mb-3">
               <span className="text-xs font-bold uppercase tracking-wider text-slate-400">Quotation</span>
-              <span className="text-xs font-bold px-2.5 py-0.5 rounded-full bg-blue-50 text-blue-700">
-                {currentQuote ? currentQuote.status : '3 kW On-Grid'}
+              <span
+                className={`text-xs font-bold px-2.5 py-0.5 rounded-full ${
+                  currentQuote
+                    ? 'bg-blue-50 text-blue-700'
+                    : 'bg-slate-100 text-slate-500'
+                }`}
+              >
+                {currentQuote ? currentQuote.status : 'AWAITING QUOTE'}
               </span>
             </div>
             <h4 className="text-base font-bold text-slate-800">Solar Technical Proposal</h4>
-            <p className="text-xs text-slate-500 mt-1 leading-relaxed">
-              Includes 12-line BOM parts list, Tier-1 Mono PERC modules, on-grid inverter, PM Surya Ghar subsidy estimate, and estimated annual savings of ₹34,493/year.
-            </p>
+            {currentQuote ? (
+              <>
+                <div className="text-xs font-semibold text-slate-700 mt-1">
+                  {Number(currentQuote.capacity_kw)} kW{' '}
+                  {String(currentQuote.system_type).replace('_', ' ')} system
+                </div>
+                <p className="text-xs text-slate-500 mt-1.5 leading-relaxed">
+                  Includes a {currentQuote.lines?.length || 12}-line BOM parts list, PM Surya Ghar
+                  subsidy estimate
+                  {annualSavingsRupees
+                    ? `, and estimated annual savings of ₹${annualSavingsRupees.toLocaleString('en-IN')}`
+                    : ''}
+                  . Review the full itemised proposal and accept it online.
+                </p>
+              </>
+            ) : (
+              <p className="text-xs text-slate-500 mt-1.5 leading-relaxed">
+                {requestedCapacity
+                  ? `You requested a ${requestedCapacity} kW ${requestedSystemType || 'solar'} system. `
+                  : ''}
+                Your technical proposal will appear here once the site survey is complete and our
+                team finalises system sizing.
+              </p>
+            )}
           </div>
           <div className="mt-5 pt-4 border-t border-slate-100 flex items-center justify-between">
             <span className="text-xs font-medium text-slate-500">
-              {currentQuote ? `Ref: #${currentQuote.quote_number}` : 'Custom Sizing'}
+              {currentQuote
+                ? `Ref: #${currentQuote.quote_number}`
+                : requestedCapacity
+                ? `${requestedCapacity} kW requested`
+                : 'Custom Sizing'}
             </span>
-            <Link
-              href={`/q/${rawToken}`}
-              className="inline-flex items-center text-xs font-bold text-amber-600 hover:text-amber-700 bg-amber-50 hover:bg-amber-100 px-3.5 py-1.5 rounded-xl transition"
-            >
-              View Full Quote →
-            </Link>
+            {currentQuote ? (
+              <Link
+                href={`/q/${rawToken}`}
+                className="inline-flex items-center text-xs font-bold text-amber-600 hover:text-amber-700 bg-amber-50 hover:bg-amber-100 px-3.5 py-1.5 rounded-xl transition"
+              >
+                View Full Quote →
+              </Link>
+            ) : (
+              <span className="text-xs font-semibold text-slate-400 bg-slate-100 px-3.5 py-1.5 rounded-xl">
+                Awaiting Survey
+              </span>
+            )}
           </div>
         </div>
 
@@ -299,8 +354,14 @@ export default async function CustomerPortalPage({ params }: PortalPageProps) {
           <div>
             <div className="flex items-center justify-between mb-3">
               <span className="text-xs font-bold uppercase tracking-wider text-slate-400">Phase 5 • Hardware & Warranty</span>
-              <span className="text-xs font-bold px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700">
-                {warranties.length > 0 ? `${warranties.length} Units Active` : 'Guaranteed'}
+              <span
+                className={`text-xs font-bold px-2.5 py-0.5 rounded-full ${
+                  warranties.length > 0
+                    ? 'bg-emerald-50 text-emerald-700'
+                    : 'bg-slate-100 text-slate-500'
+                }`}
+              >
+                {warranties.length > 0 ? `${warranties.length} Units Active` : 'Not Activated'}
               </span>
             </div>
             <h4 className="text-base font-bold text-slate-800">Warranty Protection</h4>
@@ -323,12 +384,18 @@ export default async function CustomerPortalPage({ params }: PortalPageProps) {
             <span className="text-xs font-medium text-slate-500">
               {warranties.length > 0 ? 'Verified on registry' : 'Activated on Delivery'}
             </span>
-            <Link
-              href={warranties[0]?.unit?.qr_code ? `/w/${warranties[0].unit.qr_code}` : '#'}
-              className="text-xs font-bold text-emerald-700 hover:text-emerald-800 bg-emerald-50 hover:bg-emerald-100 px-3 py-1.5 rounded-xl transition"
-            >
-              Lookup QR Status →
-            </Link>
+            {warrantyWithQr ? (
+              <Link
+                href={`/w/${warrantyWithQr.unit.qr_code}`}
+                className="text-xs font-bold text-emerald-700 hover:text-emerald-800 bg-emerald-50 hover:bg-emerald-100 px-3 py-1.5 rounded-xl transition"
+              >
+                Lookup QR Status →
+              </Link>
+            ) : (
+              <span className="text-xs font-semibold text-slate-400 bg-slate-100 px-3 py-1.5 rounded-xl">
+                Activates on Delivery
+              </span>
+            )}
           </div>
         </div>
 
@@ -337,23 +404,43 @@ export default async function CustomerPortalPage({ params }: PortalPageProps) {
           <div>
             <div className="flex items-center justify-between mb-3">
               <span className="text-xs font-bold uppercase tracking-wider text-slate-400">Phase 6 • Documentation</span>
-              <span className="text-xs font-bold px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-700">
-                SHA-256 Verified
+              <span
+                className={`text-xs font-bold px-2.5 py-0.5 rounded-full ${
+                  isCertificateIssued
+                    ? 'bg-slate-100 text-slate-700'
+                    : 'bg-slate-100 text-slate-500'
+                }`}
+              >
+                {isCertificateIssued ? 'SHA-256 Verified' : 'Not Issued'}
               </span>
             </div>
             <h4 className="text-base font-bold text-slate-800">Handover Certificate & Photos</h4>
             <p className="text-xs text-slate-500 mt-1 leading-relaxed">
-              Formal engineering sign-off, test power readings (2,850 W), earth resistance (&lt;5Ω), and before/after site inspection gallery.
+              {isCertificateIssued
+                ? `Formal engineering sign-off${
+                    installation.test_reading_w
+                      ? `, test power reading ${Number(installation.test_reading_w).toLocaleString('en-IN')} W`
+                      : ''
+                  }, safety checks, earth resistance test, and before/after site inspection gallery.`
+                : 'Your commissioning certificate, test power readings and before/after photo gallery are issued after installation sign-off.'}
             </p>
           </div>
           <div className="mt-5 pt-4 border-t border-slate-100 flex items-center justify-between">
-            <span className="text-xs font-medium text-slate-500">Tamper-Evident Proof</span>
-            <Link
-              href={`/certificate/${rawToken}`}
-              className="text-xs font-bold text-slate-800 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 px-3.5 py-1.5 rounded-xl transition"
-            >
-              View Certificate →
-            </Link>
+            <span className="text-xs font-medium text-slate-500">
+              {isCertificateIssued ? 'Tamper-Evident Proof' : 'Available After Handover'}
+            </span>
+            {isCertificateIssued ? (
+              <Link
+                href={`/certificate/${rawToken}`}
+                className="text-xs font-bold text-slate-800 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 px-3.5 py-1.5 rounded-xl transition"
+              >
+                View Certificate →
+              </Link>
+            ) : (
+              <span className="text-xs font-semibold text-slate-400 bg-slate-100 px-3.5 py-1.5 rounded-xl">
+                Pending Installation
+              </span>
+            )}
           </div>
         </div>
 

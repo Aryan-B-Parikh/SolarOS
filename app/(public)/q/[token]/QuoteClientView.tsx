@@ -33,6 +33,7 @@ interface QuoteData {
   rejectedAt: string | null;
   rejectReason: string | null;
   isExpired: boolean;
+  portalToken: string | null;
   customer: {
     name: string;
     maskedPhone: string;
@@ -184,14 +185,16 @@ export default function QuoteClientView({ quote, token }: Props) {
               <p className="text-xs text-emerald-700 mt-2">
                 Our operations team has received your confirmation. Equipment reservation and warehouse dispatch preparation are underway.
               </p>
-              <div className="mt-4">
-                <Link
-                  href={`/portal/${token}`}
-                  className="inline-flex items-center text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 px-4 py-2 rounded-xl transition shadow-sm"
-                >
-                  Track on Customer Portal →
-                </Link>
-              </div>
+              {quote.portalToken && (
+                <div className="mt-4">
+                  <Link
+                    href={`/portal/${quote.portalToken}`}
+                    className="inline-flex items-center text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 px-4 py-2 rounded-xl transition shadow-sm"
+                  >
+                    Track on Customer Portal →
+                  </Link>
+                </div>
+              )}
             </div>
           </div>
         </div>

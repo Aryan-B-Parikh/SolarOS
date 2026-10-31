@@ -38,7 +38,7 @@ export default function DashboardClient({
 
   // Compute Project Profitability per order (install profit = net revenue - materials - labour - expenses)
   const projectProfits = orders.map((o) => {
-    const netRevenuePaise = o.subtotal_paise - o.discount_paise;
+    const netRevenuePaise = BigInt(o.subtotal_paise) - BigInt(o.discount_paise);
     
     // Estimated materials = 65% of subtotal
     const materialsPaise = BigInt(Math.round(Number(netRevenuePaise) * 0.62));

@@ -6,6 +6,15 @@ import LeadDetailClient from './LeadDetailClient';
 
 export const dynamic = 'force-dynamic';
 
+function serialize(obj: any): any {
+  return JSON.parse(
+    JSON.stringify(obj, (k, v) => {
+      if (typeof v === 'bigint') return v.toString();
+      return v;
+    })
+  );
+}
+
 export default async function LeadDetailPage({
   params,
 }: {
@@ -13,6 +22,8 @@ export default async function LeadDetailPage({
 }) {
   try {
     const lead = await getLeadById(params.id);
+    if (!lead) notFound();
+
     const technicians = await prisma.technician.findMany({
       include: { user: { select: { id: true, name: true, phone: true } } },
     });
@@ -22,13 +33,12 @@ export default async function LeadDetailPage({
 
     return (
       <LeadDetailClient
-        initialLead={lead as any}
-        technicians={technicians as any}
-        templates={templates as any}
+        initialLead={serialize(lead)}
+        technicians={serialize(technicians)}
+        templates={serialize(templates)}
       />
     );
   } catch (err: any) {
     notFound();
   }
 }
-

@@ -6,7 +6,7 @@ import {
   transferWarrantyToReplacement,
 } from '../../src/domain/warranty.ts';
 
-describe('Phase 5 - Warranty Engine & Public Verification (TRD 2.4, C7)', () => {
+describe('Phase 5 - Warranty Engine & Public Verification (TRD 2.4, C7, ADR D5)', () => {
   it('calculates start and end dates for DELIVERY start basis', () => {
     const res = calculateWarrantyPeriod({
       startBasis: 'DELIVERY',
@@ -18,15 +18,37 @@ describe('Phase 5 - Warranty Engine & Public Verification (TRD 2.4, C7)', () => 
     assert.equal(res.endDate, '2031-11-04');
   });
 
-  it('calculates start and end dates for COMMISSIONING start basis', () => {
+  it('calculates start and end dates for COMMISSIONING / INSTALLATION_SIGNOFF start basis', () => {
     const res = calculateWarrantyPeriod({
-      startBasis: 'COMMISSIONING',
+      startBasis: 'INSTALLATION_SIGNOFF',
       commissioningDate: '2026-11-12',
       months: 240, // 20 years
     });
 
     assert.equal(res.startDate, '2026-11-12');
     assert.equal(res.endDate, '2046-11-11');
+  });
+
+  it('handles leap year start date (29 Feb 2028) correctly', () => {
+    const res = calculateWarrantyPeriod({
+      startBasis: 'DELIVERY',
+      deliveryDate: '2028-02-29',
+      months: 12, // 1 year
+    });
+
+    assert.equal(res.startDate, '2028-02-29');
+    assert.equal(res.endDate, '2029-02-27');
+  });
+
+  it('handles month-end clamping (e.g. 31 Jan + 1 month ends 27 Feb in non-leap year)', () => {
+    const res = calculateWarrantyPeriod({
+      startBasis: 'DELIVERY',
+      deliveryDate: '2027-01-31',
+      months: 1,
+    });
+
+    assert.equal(res.startDate, '2027-01-31');
+    assert.equal(res.endDate, '2027-02-27');
   });
 
   it('evaluates warranty eligibility accurately on end date vs day after', () => {
@@ -66,7 +88,18 @@ describe('Phase 5 - Warranty Engine & Public Verification (TRD 2.4, C7)', () => 
     assert.equal(res.isCovered, false);
   });
 
-  it('retains original end date on replacement unit warranty transfer', () => {
+  it('marks transferred parent warranty as OUT_OF_WARRANTY for the replaced unit', () => {
+    const res = evaluateWarrantyEligibility({
+      testDate: '2027-01-01',
+      startDate: '2026-11-05',
+      endDate: '2028-11-04',
+      status: 'TRANSFERRED',
+    });
+    assert.equal(res.verdict, 'OUT_OF_WARRANTY');
+    assert.equal(res.isCovered, false);
+  });
+
+  it('retains original end date on replacement unit warranty transfer (Rule C9)', () => {
     const original = {
       id: 'w-orig-1',
       endDate: '2031-11-04',

@@ -68,3 +68,6 @@ export function parseMoneyToPaise(input: string | number): bigint {
   return BigInt(Math.round(floatVal * 100));
 }
 
+export const formatPaiseLakhs = formatPaise;
+
+
