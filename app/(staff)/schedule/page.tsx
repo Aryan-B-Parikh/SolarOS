@@ -55,32 +55,32 @@ export default async function SchedulePage() {
 
   return (
     <ScheduleClient
-      technicians={technicians.map(serializeTech)}
-      installations={installations.map((i: any) => ({
+      technicians={(technicians || []).map(serializeTech)}
+      installations={(installations || []).map((i: any) => ({
         id: i.id,
         order_id: i.order_id,
         status: i.status,
         slot: i.slot,
-        scheduled_on: i.scheduled_on.toISOString().slice(0, 10),
+        scheduled_on: i.scheduled_on ? i.scheduled_on.toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10),
         crew_lead_id: i.crew_lead_id,
-        crew: i.crew.map((c: any) => ({ technician_id: c.technician_id })),
+        crew: (i.crew || []).map((c: any) => ({ technician_id: c.technician_id })),
         order: {
-          order_number: i.order.order_number,
-          capacity_kw: Number(i.order.capacity_kw),
-          system_type: i.order.system_type,
-          customer: i.order.customer,
+          order_number: i.order?.order_number || '',
+          capacity_kw: Number(i.order?.capacity_kw || 0),
+          system_type: i.order?.system_type || '',
+          customer: i.order?.customer,
         },
       }))}
-      pendingJobs={pendingJobs.map((i: any) => ({
+      pendingJobs={(pendingJobs || []).map((i: any) => ({
         id: i.id,
         order_id: i.order_id,
-        scheduled_on: i.scheduled_on.toISOString().slice(0, 10),
+        scheduled_on: i.scheduled_on ? i.scheduled_on.toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10),
         slot: i.slot,
         order: {
-          order_number: i.order.order_number,
-          capacity_kw: Number(i.order.capacity_kw),
-          system_type: i.order.system_type,
-          customer: i.order.customer,
+          order_number: i.order?.order_number || '',
+          capacity_kw: Number(i.order?.capacity_kw || 0),
+          system_type: i.order?.system_type || '',
+          customer: i.order?.customer,
         },
       }))}
     />

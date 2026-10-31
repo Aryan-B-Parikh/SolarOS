@@ -50,8 +50,8 @@ export default async function DashboardPage() {
   return (
     <DashboardClient
       initialSummary={serialize(summary)}
-      projects={serialize(projects)}
-      tickets={serialize(openTickets)}
+      projects={serialize(projects || [])}
+      tickets={serialize(openTickets || [])}
       pendingSteps={pendingSteps}
     />
   );

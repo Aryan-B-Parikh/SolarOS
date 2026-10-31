@@ -141,23 +141,49 @@ const PERIOD_CHANGE_LABELS: Record<AnalyticsPeriod, string> = {
   THIS_MONTH: 'vs last month',
 };
 
-const big = (v: string | number) => BigInt(v);
+const defaultKpiSummary: KpiSummaryDto = {
+  period: 'THIS_MONTH',
+  dateRange: { start: '', end: '' },
+  revenue: { valuePaise: '0', priorValuePaise: '0', deltaPaise: '0', percentChange: 0, isPositive: true },
+  collections: { valuePaise: '0', priorValuePaise: '0', deltaPaise: '0', percentChange: 0, isPositive: true },
+  expenses: { valuePaise: '0', priorValuePaise: '0', deltaPaise: '0', percentChange: 0, isPositive: true },
+  grossProfit: { valuePaise: '0', priorValuePaise: '0', deltaPaise: '0', percentChange: 0, isPositive: true },
+  margin: { marginBp: 0, marginPercent: '0.0%', priorMarginBp: 0, priorMarginPercent: '0.0%', deltaBp: 0 },
+  counts: { ordersCount: 0, pendingStepsCount: 0, openTicketsCount: 0, lowStockCount: 0, lossMakingCount: 0 },
+};
+
+const defaultAlerts: AlertsDto = {
+  lossMakingJobs: [],
+  lowStockItems: [],
+  uncontactedLeads: [],
+  expiringWarranties: [],
+};
+
+const big = (v: string | number) => BigInt(v || 0);
 
 export default function DashboardClient({
   initialSummary,
-  projects,
-  tickets,
-  pendingSteps,
+  projects = [],
+  tickets = [],
+  pendingSteps = {
+    leadsAwaitingSurvey: 0,
+    surveysAwaitingReview: 0,
+    ordersPendingAdvance: 0,
+    ordersConfirmed: 0,
+  },
 }: DashboardClientProps) {
+  const safeProjects = Array.isArray(projects) ? projects : [];
+  const safeTickets = Array.isArray(tickets) ? tickets : [];
+
   const [period, setPeriod] = useState<AnalyticsPeriod>('THIS_MONTH');
   const [summaryByPeriod, setSummaryByPeriod] = useState<Record<AnalyticsPeriod, KpiSummaryDto | null>>(
     {
-      TODAY: initialSummary.today,
-      THIS_WEEK: initialSummary.thisWeek,
-      THIS_MONTH: initialSummary.thisMonth,
+      TODAY: initialSummary?.today || defaultKpiSummary,
+      THIS_WEEK: initialSummary?.thisWeek || defaultKpiSummary,
+      THIS_MONTH: initialSummary?.thisMonth || defaultKpiSummary,
     }
   );
-  const [alerts] = useState<AlertsDto>(initialSummary.alerts);
+  const [alerts] = useState<AlertsDto>(initialSummary?.alerts || defaultAlerts);
   const [loadingPeriod, setLoadingPeriod] = useState<AnalyticsPeriod | null>(null);
   const [fetchError, setFetchError] = useState<string | null>(null);
 
@@ -207,7 +233,7 @@ export default function DashboardClient({
       'Install Profit (Rs)',
       'Margin %',
     ];
-    const rows = projects.map((p) => [
+    const rows = safeProjects.map((p) => [
       p.orderNumber,
       `"${p.customerName || 'Customer'}"`,
       p.status,
@@ -268,16 +294,17 @@ export default function DashboardClient({
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const lossMakingJobs = alerts.lossMakingJobs;
-  const lowStockItems = alerts.lowStockItems;
-  const uncontactedLeads = alerts.uncontactedLeads;
-  const expiringWarranties = alerts.expiringWarranties;
+  const safeAlerts = alerts || defaultAlerts;
+  const lossMakingJobs = safeAlerts.lossMakingJobs || [];
+  const lowStockItems = safeAlerts.lowStockItems || [];
+  const uncontactedLeads = safeAlerts.uncontactedLeads || [];
+  const expiringWarranties = safeAlerts.expiringWarranties || [];
   const alertCount =
     lossMakingJobs.length + lowStockItems.length + uncontactedLeads.length + expiringWarranties.length;
 
   const grossProfitTotal = useMemo(
-    () => projects.reduce((acc, p) => acc + big(p.installProfitPaise), 0n),
-    [projects]
+    () => safeProjects.reduce((acc, p) => acc + big(p.installProfitPaise), 0n),
+    [safeProjects]
   );
 
   return (
@@ -521,14 +548,14 @@ export default function DashboardClient({
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 text-slate-700">
-              {projects.length === 0 ? (
+              {safeProjects.length === 0 ? (
                 <tr>
                   <td colSpan={9} className="py-8 text-center text-slate-400">
                     No orders yet - profitability appears once orders are dispatched and installed.
                   </td>
                 </tr>
               ) : (
-                projects.map((p) => (
+                safeProjects.map((p) => (
                   <tr
                     key={p.orderId}
                     className={clsx(
@@ -577,19 +604,19 @@ export default function DashboardClient({
           <div className="space-y-2 text-xs">
             <div className="p-3 bg-slate-50 rounded-lg flex items-center justify-between">
               <span className="font-semibold text-slate-700">Leads Awaiting Site Survey:</span>
-              <span className="font-bold text-purple-700">{pendingSteps.leadsAwaitingSurvey} Leads</span>
+              <span className="font-bold text-purple-700">{pendingSteps?.leadsAwaitingSurvey || 0} Leads</span>
             </div>
             <div className="p-3 bg-slate-50 rounded-lg flex items-center justify-between">
               <span className="font-semibold text-slate-700">Surveys Awaiting Approval:</span>
-              <span className="font-bold text-blue-700">{pendingSteps.surveysAwaitingReview} Surveys</span>
+              <span className="font-bold text-blue-700">{pendingSteps?.surveysAwaitingReview || 0} Surveys</span>
             </div>
             <div className="p-3 bg-slate-50 rounded-lg flex items-center justify-between">
               <span className="font-semibold text-slate-700">Orders Pending Advance (30%):</span>
-              <span className="font-bold text-amber-700">{pendingSteps.ordersPendingAdvance} Orders</span>
+              <span className="font-bold text-amber-700">{pendingSteps?.ordersPendingAdvance || 0} Orders</span>
             </div>
             <div className="p-3 bg-slate-50 rounded-lg flex items-center justify-between">
               <span className="font-semibold text-slate-700">Confirmed Orders in Warehouse Queue:</span>
-              <span className="font-bold text-emerald-700">{pendingSteps.ordersConfirmed} Orders</span>
+              <span className="font-bold text-emerald-700">{pendingSteps?.ordersConfirmed || 0} Orders</span>
             </div>
           </div>
         </div>
@@ -599,15 +626,15 @@ export default function DashboardClient({
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-bold text-slate-900">Open Service Breakdown Tickets (C9)</h3>
             <span className="text-xs font-semibold px-2 py-0.5 rounded bg-slate-100 text-slate-700">
-              {tickets.length} Open
+              {safeTickets.length} Open
             </span>
           </div>
 
-          {tickets.length === 0 ? (
+          {safeTickets.length === 0 ? (
             <p className="text-xs text-slate-500 py-6 text-center">No open service tickets.</p>
           ) : (
             <div className="space-y-2.5">
-              {tickets.slice(0, 4).map((t) => (
+              {safeTickets.slice(0, 4).map((t) => (
                 <div key={t.id} className="p-3 rounded-lg border border-slate-200 flex items-center justify-between text-xs">
                   <div className="min-w-0">
                     <span className="font-mono font-bold text-blue-600">{t.ticket_number}</span>

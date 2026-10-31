@@ -62,11 +62,11 @@ interface AccountsClientProps {
 }
 
 export default function AccountsClient({
-  payments,
-  invoices,
-  expenses,
-  orders,
-  technicians,
+  payments = [],
+  invoices = [],
+  expenses = [],
+  orders = [],
+  technicians = [],
 }: AccountsClientProps) {
   const router = useRouter();
   const [activeTab, setActiveTab] = useState<'PAYMENTS' | 'INVOICES' | 'EXPENSES' | 'PAYROLL' | 'SUBSIDY'>('PAYMENTS');

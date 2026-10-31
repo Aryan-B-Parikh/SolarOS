@@ -65,19 +65,23 @@ interface CrewSuggestion {
 }
 
 export default function ScheduleClient({
-  technicians,
-  installations,
-  pendingJobs,
+  technicians = [],
+  installations = [],
+  pendingJobs = [],
 }: {
-  technicians: TechRow[];
-  installations: InstallationRow[];
-  pendingJobs: PendingJob[];
+  technicians?: TechRow[];
+  installations?: InstallationRow[];
+  pendingJobs?: PendingJob[];
 }) {
   const router = useRouter();
 
+  const safePending = Array.isArray(pendingJobs) ? pendingJobs : [];
+  const safeInst = Array.isArray(installations) ? installations : [];
+  const safeTechs = Array.isArray(technicians) ? technicians : [];
+
   // Current selected week offset in days
   const [weekOffset, setWeekOffset] = useState(0);
-  const [selectedJob, setSelectedJob] = useState<PendingJob | null>(pendingJobs[0] || null);
+  const [selectedJob, setSelectedJob] = useState<PendingJob | null>(safePending[0] || null);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
 
   // Real suggestion state (FR-4.6): fetched from the crew-scorer API
@@ -85,7 +89,7 @@ export default function ScheduleClient({
   const [suggestLoading, setSuggestLoading] = useState(false);
   const [suggestError, setSuggestError] = useState<string | null>(null);
   const [scheduledDate, setScheduledDate] = useState<string>(
-    pendingJobs[0]?.scheduled_on || new Date().toISOString().slice(0, 10)
+    safePending[0]?.scheduled_on || new Date().toISOString().slice(0, 10)
   );
   const [confirmingLeadId, setConfirmingLeadId] = useState<string | null>(null);
   const [confirmError, setConfirmError] = useState<string | null>(null);
@@ -112,7 +116,7 @@ export default function ScheduleClient({
 
   // Real installations grouped by crew technician × scheduled_on
   const getJobsForCell = (techUserId: string, dateStr: string) => {
-    return installations.filter((inst) => {
+    return safeInst.filter((inst) => {
       if (inst.scheduled_on !== dateStr) return false;
       const isLead = inst.crew_lead_id === techUserId;
       const isMember = inst.crew?.some((m) => m.technician_id === techUserId);
@@ -179,7 +183,7 @@ export default function ScheduleClient({
   }
 
   function handleJobChange(jobId: string) {
-    const job = pendingJobs.find((j) => j.id === jobId) || null;
+    const job = safePending.find((j) => j.id === jobId) || null;
     setSelectedJob(job);
     setSuggestions(null);
     setSuggestError(null);
@@ -229,7 +233,7 @@ export default function ScheduleClient({
             className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-semibold shadow-xs flex items-center gap-1.5"
           >
             <Sparkles className="w-4 h-4" />
-            <span>Crew Suggestions ({pendingJobs.length})</span>
+            <span>Crew Suggestions ({safePending.length})</span>
           </button>
         </div>
       </div>
@@ -252,7 +256,7 @@ export default function ScheduleClient({
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100 text-slate-700">
-            {technicians.map((tech) => (
+            {safeTechs.map((tech) => (
               <tr key={tech.user_id} className="hover:bg-slate-50/50">
                 <td className="px-4 py-3 border-r border-slate-200 bg-slate-50/30">
                   <div className="font-semibold text-slate-900 flex items-center gap-1.5">
@@ -342,10 +346,10 @@ export default function ScheduleClient({
                   value={selectedJob?.id || ''}
                   onChange={(e) => handleJobChange(e.target.value)}
                   className="w-full p-2.5 text-xs border border-slate-300 rounded-lg bg-white font-medium"
-                  disabled={pendingJobs.length === 0}
+                  disabled={safePending.length === 0}
                 >
-                  {pendingJobs.length === 0 && <option value="">No installations awaiting crew</option>}
-                  {pendingJobs.map((j) => (
+                  {safePending.length === 0 && <option value="">No installations awaiting crew</option>}
+                  {safePending.map((j) => (
                     <option key={j.id} value={j.id}>
                       {j.order.order_number} — {j.order.customer.name} ({j.order.capacity_kw} kW{' '}
                       {j.order.system_type})
