@@ -22,3 +22,4 @@ export const POST = createApiHandler(
     return NextResponse.json({ activity }, { status: 201 });
   }
 );
+

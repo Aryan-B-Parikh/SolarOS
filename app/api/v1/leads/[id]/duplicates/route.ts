@@ -24,3 +24,4 @@ export const GET = createApiHandler(
     return NextResponse.json({ flags });
   }
 );
+

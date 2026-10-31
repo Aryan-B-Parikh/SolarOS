@@ -116,6 +116,7 @@ export async function POST(req: NextRequest) {
       success: true,
       leadNumber: lead.lead_number,
       portalUrl,
+      rawToken,
       message: 'Your solar enquiry has been received. Our team will contact you shortly.',
     });
   } catch (err: any) {
