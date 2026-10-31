@@ -1,4 +1,4 @@
-import { PrismaClient, UserRole, CustomerType, LinkScope, LeadSource, LeadStatus, SystemType, ProductCategory, WarrantyStartBasis, BomRule, FaultPriority, OrderStatus, QuoteStatus, PaymentMethod, PaymentKind, LocationType, MovementType, POStatus, UnitStatus, ScanMethod, InstallationStatus, WarrantyCoverage, WarrantyStatus, WarrantySource } from '@prisma/client';
+import { PrismaClient, UserRole, CustomerType, LinkScope, LeadSource, LeadStatus, SystemType, ProductCategory, WarrantyStartBasis, BomRule, FaultPriority, OrderStatus, QuoteStatus, PaymentMethod, PaymentKind, LocationType, MovementType, POStatus, UnitStatus, ScanMethod, InstallationStatus, WarrantyCoverage, WarrantyStatus, WarrantySource, ExpenseCategory } from '@prisma/client';
 import crypto from 'crypto';
 
 const prisma = new PrismaClient();
@@ -250,49 +250,171 @@ async function main() {
       },
     });
 
-    // Populate BOM rules for 3 kW On-Grid (Spec TRD 2.4 table)
-    if (t.code === 'ONG3KW') {
-      const bomRules = [
-        { product_id: productMap['PANEL-540W'], rule: BomRule.PANEL_COUNT, value: 1.0, allowance: 0 },
-        { product_id: productMap[t.inverterSku], rule: BomRule.FIXED, value: 1.0, allowance: 0 },
-        { product_id: productMap['CHG-CTRL-48V'], rule: BomRule.FIXED, value: 1.0, allowance: 0 }, // per PDF Q4
-        { product_id: productMap['STR-MOUNT-SET'], rule: BomRule.PER_PANEL, value: 1.0, allowance: 0 },
-        { product_id: productMap['CABLE-DC-4SQMM'], rule: BomRule.PER_CABLE_METER, value: 2.0, allowance: 5.0 }, // 2x + 5m
-        { product_id: productMap['CABLE-AC-4SQMM'], rule: BomRule.PER_CABLE_METER, value: 1.0, allowance: 5.0 }, // 1x + 5m
-        { product_id: productMap['ACDB-1PH'], rule: BomRule.FIXED, value: 1.0, allowance: 0 },
-        { product_id: productMap['DCDB-1IN-1OUT'], rule: BomRule.FIXED, value: 1.0, allowance: 0 },
-        { product_id: productMap['EARTH-KIT-CHEM'], rule: BomRule.FIXED, value: 3.0, allowance: 0 },
-        { product_id: productMap['LA-CONV-COPPER'], rule: BomRule.FIXED, value: 1.0, allowance: 0 },
-        { product_id: productMap['CONN-MC4-PAIR'], rule: BomRule.FIXED, value: 4.0, allowance: 0 },
-        { product_id: productMap['SRV-INSTALL-TEST'], rule: BomRule.FIXED, value: 1.0, allowance: 0 },
-      ];
+    // Populate BOM rules for all system templates
+    const isOffGrid = t.type === SystemType.OFF_GRID;
+    const bomRules = [
+      { product_id: productMap['PANEL-540W'], rule: BomRule.PANEL_COUNT, value: 1.0, allowance: 0 },
+      { product_id: productMap[t.inverterSku], rule: BomRule.FIXED, value: 1.0, allowance: 0 },
+      ...(isOffGrid
+        ? [
+            { product_id: productMap['CHG-CTRL-48V'], rule: BomRule.FIXED, value: 1.0, allowance: 0 },
+            { product_id: productMap['BAT-150AH'], rule: BomRule.PER_KW, value: 1.0, allowance: 0 },
+          ]
+        : []),
+      ...(t.code === 'ONG3KW'
+        ? [{ product_id: productMap['CHG-CTRL-48V'], rule: BomRule.FIXED, value: 1.0, allowance: 0 }]
+        : []),
+      { product_id: productMap['STR-MOUNT-SET'], rule: BomRule.PER_PANEL, value: 1.0, allowance: 0 },
+      { product_id: productMap['CABLE-DC-4SQMM'], rule: BomRule.PER_CABLE_METER, value: 2.0, allowance: 5.0 }, // 2x + 5m
+      { product_id: productMap['CABLE-AC-4SQMM'], rule: BomRule.PER_CABLE_METER, value: 1.0, allowance: 5.0 }, // 1x + 5m
+      { product_id: productMap['ACDB-1PH'], rule: BomRule.FIXED, value: 1.0, allowance: 0 },
+      { product_id: productMap['DCDB-1IN-1OUT'], rule: BomRule.FIXED, value: 1.0, allowance: 0 },
+      { product_id: productMap['EARTH-KIT-CHEM'], rule: BomRule.FIXED, value: 3.0, allowance: 0 },
+      { product_id: productMap['LA-CONV-COPPER'], rule: BomRule.FIXED, value: 1.0, allowance: 0 },
+      { product_id: productMap['CONN-MC4-PAIR'], rule: BomRule.FIXED, value: 4.0, allowance: 0 },
+      { product_id: productMap['SRV-INSTALL-TEST'], rule: BomRule.FIXED, value: 1.0, allowance: 0 },
+    ];
 
-      for (let s = 0; s < bomRules.length; s++) {
-        const br = bomRules[s];
-        await prisma.templateBomLine.upsert({
-          where: {
-            template_id_product_id: {
-              template_id: tmpl.id,
-              product_id: br.product_id,
-            },
-          },
-          create: {
+    for (let s = 0; s < bomRules.length; s++) {
+      const br = bomRules[s];
+      await prisma.templateBomLine.upsert({
+        where: {
+          template_id_product_id: {
             template_id: tmpl.id,
             product_id: br.product_id,
-            rule: br.rule,
-            value: br.value,
-            allowance: br.allowance,
-            sort_order: s + 1,
           },
-          update: {
-            rule: br.rule,
-            value: br.value,
-            allowance: br.allowance,
-            sort_order: s + 1,
-          },
-        });
-      }
+        },
+        create: {
+          template_id: tmpl.id,
+          product_id: br.product_id,
+          rule: br.rule,
+          value: br.value,
+          allowance: br.allowance,
+          sort_order: s + 1,
+        },
+        update: {
+          rule: br.rule,
+          value: br.value,
+          allowance: br.allowance,
+          sort_order: s + 1,
+        },
+      });
     }
+  }
+
+  // 7b. Panel Set templates & Installation service template (C3)
+  console.log('Seeding Panel Set and Service templates (C3)...');
+  const panelSetTemplates = [
+    { code: 'PANEL-SET-1KW', name: '1 kW Solar Panel Set (Panels, Structure & DC Kit)', kw: 1.0 },
+    { code: 'PANEL-SET-2KW', name: '2 kW Solar Panel Set (Panels, Structure & DC Kit)', kw: 2.0 },
+    { code: 'PANEL-SET-3KW', name: '3 kW Solar Panel Set (Panels, Structure & DC Kit)', kw: 3.0 },
+    { code: 'PANEL-SET-4KW', name: '4 kW Solar Panel Set (Panels, Structure & DC Kit)', kw: 4.0 },
+    { code: 'PANEL-SET-5KW', name: '5 kW Solar Panel Set (Panels, Structure & DC Kit)', kw: 5.0 },
+  ];
+
+  for (const pst of panelSetTemplates) {
+    const tmpl = await prisma.systemTemplate.upsert({
+      where: { code: pst.code },
+      create: {
+        code: pst.code,
+        name: pst.name,
+        system_type: SystemType.ON_GRID,
+        capacity_kw: pst.kw,
+        panel_product_id: panelId,
+        default_cable_distance_m: 20,
+        labour_allowance_paise: 300000n,
+        is_active: true,
+      },
+      update: {
+        name: pst.name,
+        capacity_kw: pst.kw,
+        panel_product_id: panelId,
+      },
+    });
+
+    const pstBom = [
+      { product_id: panelId, rule: BomRule.PANEL_COUNT, value: 1.0, allowance: 0 },
+      { product_id: productMap['STR-MOUNT-SET'], rule: BomRule.PER_PANEL, value: 1.0, allowance: 0 },
+      { product_id: productMap['CABLE-DC-4SQMM'], rule: BomRule.PER_CABLE_METER, value: 2.0, allowance: 5.0 },
+      { product_id: productMap['CONN-MC4-PAIR'], rule: BomRule.FIXED, value: 4.0, allowance: 0 },
+    ];
+
+    for (let s = 0; s < pstBom.length; s++) {
+      const br = pstBom[s];
+      await prisma.templateBomLine.upsert({
+        where: {
+          template_id_product_id: {
+            template_id: tmpl.id,
+            product_id: br.product_id,
+          },
+        },
+        create: {
+          template_id: tmpl.id,
+          product_id: br.product_id,
+          rule: br.rule,
+          value: br.value,
+          allowance: br.allowance,
+          sort_order: s + 1,
+        },
+        update: {
+          rule: br.rule,
+          value: br.value,
+          allowance: br.allowance,
+          sort_order: s + 1,
+        },
+      });
+    }
+  }
+
+  // Installation Service template (C3)
+  const srvTmpl = await prisma.systemTemplate.upsert({
+    where: { code: 'SRV-INSTALL-ONLY' },
+    create: {
+      code: 'SRV-INSTALL-ONLY',
+      name: 'Rooftop Solar Installation, Testing & Earthing Service',
+      system_type: SystemType.ON_GRID,
+      capacity_kw: 3.0,
+      panel_product_id: panelId,
+      default_cable_distance_m: 25,
+      labour_allowance_paise: 800000n,
+      is_active: true,
+    },
+    update: {
+      name: 'Rooftop Solar Installation, Testing & Earthing Service',
+      panel_product_id: panelId,
+    },
+  });
+
+  const srvBom = [
+    { product_id: productMap['SRV-INSTALL-TEST'], rule: BomRule.FIXED, value: 1.0, allowance: 0 },
+    { product_id: productMap['EARTH-KIT-CHEM'], rule: BomRule.FIXED, value: 3.0, allowance: 0 },
+    { product_id: productMap['LA-CONV-COPPER'], rule: BomRule.FIXED, value: 1.0, allowance: 0 },
+  ];
+
+  for (let s = 0; s < srvBom.length; s++) {
+    const br = srvBom[s];
+    await prisma.templateBomLine.upsert({
+      where: {
+        template_id_product_id: {
+          template_id: srvTmpl.id,
+          product_id: br.product_id,
+        },
+      },
+      create: {
+        template_id: srvTmpl.id,
+        product_id: br.product_id,
+        rule: br.rule,
+        value: br.value,
+        allowance: br.allowance,
+        sort_order: s + 1,
+      },
+      update: {
+        rule: br.rule,
+        value: br.value,
+        allowance: br.allowance,
+        sort_order: s + 1,
+      },
+    });
   }
 
   // 8. Fault Codes per Model
@@ -484,20 +606,25 @@ async function main() {
     update: { status: InstallationStatus.COMPLETED },
   });
 
-  await prisma.warranty.create({
-    data: {
-      unit_id: mayUnit.id,
-      installation_id: pastInstall1.id,
-      customer_id: mayCustomer.id,
-      product_id: mayInvProduct,
-      coverage: WarrantyCoverage.EQUIPMENT,
-      start_date: new Date('2025-05-05'),
-      end_date: new Date('2027-05-04'), // 24 months - 1 day
-      months: 24,
-      status: WarrantyStatus.ACTIVE,
-      source: WarrantySource.DELIVERY,
-    },
+  const existingMayWarranty = await prisma.warranty.findFirst({
+    where: { unit_id: mayUnit.id },
   });
+  if (!existingMayWarranty) {
+    await prisma.warranty.create({
+      data: {
+        unit_id: mayUnit.id,
+        installation_id: pastInstall1.id,
+        customer_id: mayCustomer.id,
+        product_id: mayInvProduct,
+        coverage: WarrantyCoverage.EQUIPMENT,
+        start_date: new Date('2025-05-05'),
+        end_date: new Date('2027-05-04'), // 24 months - 1 day
+        months: 24,
+        status: WarrantyStatus.ACTIVE,
+        source: WarrantySource.DELIVERY,
+      },
+    });
+  }
 
   // B. March 2023 Customer (Out of Warranty: delivered 10 March 2023, 24 mo -> ended 9 March 2025)
   const marchCustomer = await prisma.customer.upsert({
@@ -602,20 +729,373 @@ async function main() {
     update: { status: InstallationStatus.COMPLETED },
   });
 
-  await prisma.warranty.create({
-    data: {
-      unit_id: marchUnit.id,
-      installation_id: pastInstall2.id,
-      customer_id: marchCustomer.id,
-      product_id: mayInvProduct,
-      coverage: WarrantyCoverage.EQUIPMENT,
-      start_date: new Date('2023-03-10'),
-      end_date: new Date('2025-03-09'), // Ended in March 2025
-      months: 24,
-      status: WarrantyStatus.ACTIVE, // Status stays ACTIVE; covers_today is computed false
-      source: WarrantySource.DELIVERY,
-    },
+  const existingMarchWarranty = await prisma.warranty.findFirst({
+    where: { unit_id: marchUnit.id },
   });
+  if (!existingMarchWarranty) {
+    await prisma.warranty.create({
+      data: {
+        unit_id: marchUnit.id,
+        installation_id: pastInstall2.id,
+        customer_id: marchCustomer.id,
+        product_id: mayInvProduct,
+        coverage: WarrantyCoverage.EQUIPMENT,
+        start_date: new Date('2023-03-10'),
+        end_date: new Date('2025-03-09'), // Ended in March 2025
+        months: 24,
+        status: WarrantyStatus.ACTIVE, // Status stays ACTIVE; covers_today is computed false
+        source: WarrantySource.DELIVERY,
+      },
+    });
+  }
+
+  // 11. Open Purchase Order (FR-5.8)
+  console.log('Seeding open Purchase Order (FR-5.8)...');
+  const openPO = await prisma.purchaseOrder.upsert({
+    where: { po_number: 'PO-2026-0001' },
+    create: {
+      po_number: 'PO-2026-0001',
+      supplier_id: supplierMap['Tata Power Solar Systems Ltd'],
+      status: POStatus.OPEN,
+      ordered_on: new Date('2026-10-25'),
+      expected_on: new Date('2026-11-05'),
+      total_paise: 55000000n, // Rs 5,50,000
+      created_by: warehouseUserId,
+    },
+    update: { status: POStatus.OPEN },
+  });
+
+  await prisma.purchaseOrderLine.deleteMany({ where: { po_id: openPO.id } });
+  await prisma.purchaseOrderLine.createMany({
+    data: [
+      {
+        po_id: openPO.id,
+        product_id: productMap['PANEL-540W'],
+        qty_ordered: 40,
+        qty_received: 0,
+        unit_cost_paise: 1100000n,
+      },
+      {
+        po_id: openPO.id,
+        product_id: productMap['INV-ONG-3KW'],
+        qty_ordered: 4,
+        qty_received: 0,
+        unit_cost_paise: 2800000n,
+      },
+    ],
+  });
+
+  // 12. ~30 Historical Orders across Aug - Oct 2026 (including 1 Loss-Making Project)
+  console.log('Seeding ~30 historical orders for dashboard analytics and trend charts...');
+  const salesUserId = userMap['sales1@sunpower.ops'];
+  const techLeadUser = await prisma.user.findFirst({ where: { role: UserRole.TECHNICIAN } });
+  const accountsUserId = userMap['accounts@sunpower.ops'];
+
+  // Loss-making project (Sunilbhai Mehta):
+  // Expenses = Rs 2,20,000 (22,000,000 paise) on Net Revenue = Rs 1,80,000 (18,000,000 paise) => Loss = -Rs 40,000
+  const lossCust = await prisma.customer.upsert({
+    where: { phone: '+919879000099' },
+    create: {
+      customer_number: 'CUST-2026-0099',
+      name: 'Sunilbhai Mehta',
+      phone: '+919879000099',
+      email: 'sunil.mehta@example.com',
+      address: '77 Heritage Bungalows, Thaltej',
+      city: 'Ahmedabad',
+      state: 'Gujarat',
+      pincode: '380059',
+    },
+    update: { name: 'Sunilbhai Mehta' },
+  });
+
+  const lossLead = await prisma.lead.upsert({
+    where: { lead_number: 'LD-2026-0099' },
+    create: {
+      lead_number: 'LD-2026-0099',
+      customer_id: lossCust.id,
+      status: LeadStatus.WON,
+      owner_id: salesUserId,
+      monthly_bill_paise: 350000n,
+      roof_area_sqm: 40,
+      source: LeadSource.WEB,
+    },
+    update: { status: LeadStatus.WON },
+  });
+
+  const lossQuote = await prisma.quote.upsert({
+    where: { quote_number: 'QT-2026-0099' },
+    create: {
+      quote_number: 'QT-2026-0099',
+      lead_id: lossLead.id,
+      customer_id: lossCust.id,
+      capacity_kw: 3.0,
+      system_type: SystemType.ON_GRID,
+      subtotal_paise: 18000000n,
+      discount_paise: 0n,
+      tax_paise: 2480000n,
+      total_paise: 20480000n,
+      valid_until: new Date('2026-10-31'),
+      status: QuoteStatus.ACCEPTED,
+    },
+    update: { status: QuoteStatus.ACCEPTED },
+  });
+
+  const lossOrder = await prisma.order.upsert({
+    where: { order_number: 'SO-2026-LOSS01' },
+    create: {
+      order_number: 'SO-2026-LOSS01',
+      quote_id: lossQuote.id,
+      customer_id: lossCust.id,
+      status: OrderStatus.INSTALLED,
+      capacity_kw: 3.0,
+      system_type: SystemType.ON_GRID,
+      site_snapshot: { address: lossCust.address },
+      subtotal_paise: 18000000n,
+      discount_paise: 0n,
+      tax_paise: 2480000n,
+      total_paise: 20480000n,
+      advance_required_paise: 6144000n,
+      paid_paise: 20480000n,
+      confirmed_at: new Date('2026-10-15T09:00:00Z'),
+    },
+    update: { status: OrderStatus.INSTALLED },
+  });
+
+  await prisma.payment.upsert({
+    where: { idempotency_key: 'seed-payment-loss-01' },
+    create: {
+      order_id: lossOrder.id,
+      amount_paise: 20480000n,
+      method: PaymentMethod.NEFT,
+      kind: PaymentKind.FINAL,
+      reference: 'NEFT-LOSS-001',
+      received_on: new Date('2026-10-16'),
+      recorded_by: accountsUserId,
+      idempotency_key: 'seed-payment-loss-01',
+    },
+    update: {},
+  });
+
+  await prisma.installation.upsert({
+    where: { order_id: lossOrder.id },
+    create: {
+      order_id: lossOrder.id,
+      status: InstallationStatus.COMPLETED,
+      crew_lead_id: techLeadUser?.id,
+      scheduled_on: new Date('2026-10-22'),
+      started_at: new Date('2026-10-22T04:00:00Z'),
+      finished_at: new Date('2026-10-22T12:00:00Z'),
+      installed_capacity_kw: 3.24,
+      test_reading_w: 2900,
+      signed_name: 'Sunil Mehta',
+    },
+    update: { status: InstallationStatus.COMPLETED },
+  });
+
+  // Delete previous expenses if any, and record high expenses to trigger loss
+  await prisma.expense.deleteMany({ where: { order_id: lossOrder.id } });
+  await prisma.expense.createMany({
+    data: [
+      {
+        order_id: lossOrder.id,
+        category: ExpenseCategory.MATERIALS,
+        amount_paise: 14000000n, // Rs 1,40,000 materials replacement
+        incurred_on: new Date('2026-10-21'),
+        description: 'Emergency cable tray and custom mounting structure rerouting',
+        recorded_by: accountsUserId,
+      },
+      {
+        order_id: lossOrder.id,
+        category: ExpenseCategory.LABOUR,
+        amount_paise: 5000000n, // Rs 50,000 sub-contractor crane & heavy rigging
+        incurred_on: new Date('2026-10-22'),
+        description: 'Crane hire and additional scaffolding team for complex roof access',
+        recorded_by: accountsUserId,
+      },
+      {
+        order_id: lossOrder.id,
+        category: ExpenseCategory.TRANSPORT,
+        amount_paise: 3000000n, // Rs 30,000 express freight
+        incurred_on: new Date('2026-10-22'),
+        description: 'Special vehicle transport for fragile equipment',
+        recorded_by: accountsUserId,
+      },
+    ],
+  });
+
+  // Seed 29 regular historical orders
+  const historicalSeedSpecs = [
+    // August 2026 (8 orders)
+    { name: 'Hareshbhai Patel', phone: '+919879000101', date: '2026-08-03', kw: 3.0, status: OrderStatus.CLOSED, rev: 20500000n, exp: 5200000n },
+    { name: 'Minakshiben Shah', phone: '+919879000102', date: '2026-08-07', kw: 2.0, status: OrderStatus.CLOSED, rev: 15000000n, exp: 3800000n },
+    { name: 'Chetanbhai Desai', phone: '+919879000103', date: '2026-08-11', kw: 4.0, status: OrderStatus.CLOSED, rev: 26000000n, exp: 6800000n },
+    { name: 'Nileshbhai Trivedi', phone: '+919879000104', date: '2026-08-14', kw: 5.0, status: OrderStatus.CLOSED, rev: 32000000n, exp: 8200000n },
+    { name: 'Rameshbhai Parmar', phone: '+919879000105', date: '2026-08-18', kw: 1.0, status: OrderStatus.CLOSED, rev: 9500000n, exp: 2600000n },
+    { name: 'Hansaben Vora', phone: '+919879000106', date: '2026-08-22', kw: 3.0, status: OrderStatus.CLOSED, rev: 20500000n, exp: 5400000n },
+    { name: 'Ketanbhai Bhatt', phone: '+919879000107', date: '2026-08-26', kw: 2.0, status: OrderStatus.CLOSED, rev: 15000000n, exp: 3900000n },
+    { name: 'Anandbhai Solanki', phone: '+919879000108', date: '2026-08-30', kw: 3.0, status: OrderStatus.CLOSED, rev: 20500000n, exp: 5300000n },
+
+    // September 2026 (10 orders)
+    { name: 'Bhavnaben Modi', phone: '+919879000109', date: '2026-09-02', kw: 3.0, status: OrderStatus.CLOSED, rev: 20500000n, exp: 5100000n },
+    { name: 'Pradeepbhai Joshi', phone: '+919879000110', date: '2026-09-05', kw: 4.0, status: OrderStatus.CLOSED, rev: 26000000n, exp: 6500000n },
+    { name: 'Dharmeshbhai Soni', phone: '+919879000111', date: '2026-09-09', kw: 5.0, status: OrderStatus.CLOSED, rev: 32000000n, exp: 8000000n },
+    { name: 'Jagdishbhai Raval', phone: '+919879000112', date: '2026-09-12', kw: 2.0, status: OrderStatus.CLOSED, rev: 15000000n, exp: 3700000n },
+    { name: 'Manishaben Gadhvi', phone: '+919879000113', date: '2026-09-16', kw: 3.0, status: OrderStatus.CLOSED, rev: 20500000n, exp: 5200000n },
+    { name: 'Bharatbhai Dave', phone: '+919879000114', date: '2026-09-19', kw: 1.0, status: OrderStatus.CLOSED, rev: 9500000n, exp: 2500000n },
+    { name: 'Jayeshbhai Prajapati', phone: '+919879000115', date: '2026-09-22', kw: 4.0, status: OrderStatus.CLOSED, rev: 26000000n, exp: 6700000n },
+    { name: 'Rekhaben Panchal', phone: '+919879000116', date: '2026-09-25', kw: 3.0, status: OrderStatus.CLOSED, rev: 20500000n, exp: 5300000n },
+    { name: 'Vikrambhai Rajput', phone: '+919879000117', date: '2026-09-28', kw: 5.0, status: OrderStatus.CLOSED, rev: 32000000n, exp: 8100000n },
+    { name: 'Sanjaybhai Thakar', phone: '+919879000118', date: '2026-09-30', kw: 2.0, status: OrderStatus.CLOSED, rev: 15000000n, exp: 3800000n },
+
+    // October 2026 (11 orders, covering earlier month, this week, and today)
+    { name: 'Hiteshbhai Barot', phone: '+919879000119', date: '2026-10-02', kw: 3.0, status: OrderStatus.INSTALLED, rev: 20500000n, exp: 5000000n },
+    { name: 'Varshaben Vyas', phone: '+919879000120', date: '2026-10-06', kw: 4.0, status: OrderStatus.INSTALLED, rev: 26000000n, exp: 6400000n },
+    { name: 'Tusharbhai Parekh', phone: '+919879000121', date: '2026-10-10', kw: 5.0, status: OrderStatus.INSTALLED, rev: 32000000n, exp: 7900000n },
+    { name: 'Gaurangbhai Chauhan', phone: '+919879000122', date: '2026-10-14', kw: 2.0, status: OrderStatus.INSTALLED, rev: 15000000n, exp: 3600000n },
+    { name: 'Shitalben Jani', phone: '+919879000123', date: '2026-10-18', kw: 3.0, status: OrderStatus.INSTALLED, rev: 20500000n, exp: 5100000n },
+    { name: 'Vipulbhai Makwana', phone: '+919879000124', date: '2026-10-21', kw: 1.0, status: OrderStatus.INSTALLED, rev: 9500000n, exp: 2400000n },
+    { name: 'Ashokbhai Chaudhari', phone: '+919879000125', date: '2026-10-24', kw: 4.0, status: OrderStatus.INSTALLED, rev: 26000000n, exp: 6600000n },
+    { name: 'Kinjalben Rathod', phone: '+919879000126', date: '2026-10-27', kw: 3.0, status: OrderStatus.INSTALLED, rev: 20500000n, exp: 5200000n }, // This week
+    { name: 'Mahendrabhai Shukla', phone: '+919879000127', date: '2026-10-29', kw: 5.0, status: OrderStatus.DISPATCHED, rev: 32000000n, exp: 3000000n }, // This week
+    { name: 'Parulben Doshi', phone: '+919879000128', date: '2026-10-31', kw: 3.0, status: OrderStatus.CONFIRMED, rev: 20500000n, exp: 1200000n }, // Today / confirmed
+    { name: 'Nitinbhai Sheth', phone: '+919879000129', date: '2026-10-31', kw: 2.0, status: OrderStatus.CONFIRMED, rev: 15000000n, exp: 800000n }, // Today / confirmed
+  ];
+
+  for (let i = 0; i < historicalSeedSpecs.length; i++) {
+    const s = historicalSeedSpecs[i];
+    const seq = String(i + 1).padStart(3, '0');
+    const custNum = `CUST-HIST-${seq}`;
+    const leadNum = `LD-HIST-${seq}`;
+    const quoteNum = `QT-HIST-${seq}`;
+    const orderNum = `SO-HIST-${seq}`;
+    const orderDate = new Date(`${s.date}T10:00:00Z`);
+
+    const cust = await prisma.customer.upsert({
+      where: { phone: s.phone },
+      create: {
+        customer_number: custNum,
+        name: s.name,
+        phone: s.phone,
+        email: `client.${seq}@example.com`,
+        address: `${i + 10} Shanti Avenue, Drive-In Road`,
+        city: 'Ahmedabad',
+        state: 'Gujarat',
+        pincode: '380052',
+      },
+      update: { name: s.name },
+    });
+
+    const lead = await prisma.lead.upsert({
+      where: { lead_number: leadNum },
+      create: {
+        lead_number: leadNum,
+        customer_id: cust.id,
+        status: LeadStatus.WON,
+        owner_id: salesUserId,
+        monthly_bill_paise: BigInt(Math.round(s.kw * 120000)),
+        roof_area_sqm: s.kw * 10,
+        source: LeadSource.WEB,
+        created_at: new Date(orderDate.getTime() - 7 * 86400000),
+      },
+      update: { status: LeadStatus.WON },
+    });
+
+    const tax = (s.rev * 138n) / 1000n; // ~13.8% tax
+    const total = s.rev + tax;
+    const advance = (total * 30n) / 100n;
+
+    const quote = await prisma.quote.upsert({
+      where: { quote_number: quoteNum },
+      create: {
+        quote_number: quoteNum,
+        lead_id: lead.id,
+        customer_id: cust.id,
+        capacity_kw: s.kw,
+        system_type: SystemType.ON_GRID,
+        subtotal_paise: s.rev,
+        discount_paise: 0n,
+        tax_paise: tax,
+        total_paise: total,
+        valid_until: new Date(orderDate.getTime() + 15 * 86400000),
+        status: QuoteStatus.ACCEPTED,
+        created_at: new Date(orderDate.getTime() - 3 * 86400000),
+      },
+      update: { status: QuoteStatus.ACCEPTED },
+    });
+
+    const isFullyPaid = s.status === OrderStatus.INSTALLED || s.status === OrderStatus.CLOSED;
+    const paidPaise = isFullyPaid ? total : advance;
+
+    const order = await prisma.order.upsert({
+      where: { order_number: orderNum },
+      create: {
+        order_number: orderNum,
+        quote_id: quote.id,
+        customer_id: cust.id,
+        status: s.status,
+        capacity_kw: s.kw,
+        system_type: SystemType.ON_GRID,
+        site_snapshot: { address: cust.address },
+        subtotal_paise: s.rev,
+        discount_paise: 0n,
+        tax_paise: tax,
+        total_paise: total,
+        advance_required_paise: advance,
+        paid_paise: paidPaise,
+        confirmed_at: orderDate,
+        created_at: orderDate,
+      },
+      update: { status: s.status, paid_paise: paidPaise },
+    });
+
+    // Record payment
+    await prisma.payment.upsert({
+      where: { idempotency_key: `seed-pay-${orderNum}` },
+      create: {
+        order_id: order.id,
+        amount_paise: paidPaise,
+        method: PaymentMethod.UPI,
+        kind: isFullyPaid ? PaymentKind.FINAL : PaymentKind.ADVANCE,
+        reference: `UPI-REF-${seq}`,
+        received_on: new Date(orderDate.toISOString().split('T')[0]),
+        recorded_by: accountsUserId,
+        idempotency_key: `seed-pay-${orderNum}`,
+      },
+      update: {},
+    });
+
+    // Record expenses
+    await prisma.expense.deleteMany({ where: { order_id: order.id } });
+    await prisma.expense.create({
+      data: {
+        order_id: order.id,
+        category: ExpenseCategory.MATERIALS,
+        amount_paise: s.exp,
+        incurred_on: new Date(orderDate.toISOString().split('T')[0]),
+        description: `BOS Materials and cabling for order ${orderNum}`,
+        recorded_by: accountsUserId,
+      },
+    });
+
+    // If installed or closed, seed completed installation record
+    if (s.status === OrderStatus.INSTALLED || s.status === OrderStatus.CLOSED) {
+      await prisma.installation.upsert({
+        where: { order_id: order.id },
+        create: {
+          order_id: order.id,
+          status: InstallationStatus.COMPLETED,
+          crew_lead_id: techLeadUser?.id,
+          scheduled_on: new Date(orderDate.getTime() + 4 * 86400000),
+          started_at: new Date(orderDate.getTime() + 4 * 86400000),
+          finished_at: new Date(orderDate.getTime() + 4 * 86400000 + 6 * 3600000),
+          installed_capacity_kw: s.kw,
+          test_reading_w: Math.round(s.kw * 900),
+          signed_name: s.name,
+        },
+        update: { status: InstallationStatus.COMPLETED },
+      });
+    }
+  }
 
   console.log('--- SunPower Ops Seed Completed Successfully ---');
 }

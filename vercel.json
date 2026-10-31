@@ -1,0 +1,21 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "crons": [
+    {
+      "path": "/api/v1/cron/reconcile",
+      "schedule": "30 20 * * *"
+    },
+    {
+      "path": "/api/v1/cron/maintenance",
+      "schedule": "35 20 * * *"
+    },
+    {
+      "path": "/api/v1/cron/outbox",
+      "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/v1/cron/leads-sla",
+      "schedule": "*/15 * * * *"
+    }
+  ]
+}

@@ -17,12 +17,41 @@ if (!file) {
 const sql = fs.readFileSync(path.resolve(file), 'utf8');
 const prisma = new PrismaClient();
 
-// Remove line comments (-- ...)
-const cleanSql = sql.replace(/--.*$/gm, '');
-const statements = cleanSql
-  .split(';')
-  .map((s) => s.trim())
-  .filter((s) => s.length > 0);
+function splitSql(sql) {
+  const cleanSql = sql.replace(/--.*$/gm, '');
+  const statements = [];
+  let current = '';
+  let inDollarQuote = false;
+
+  for (let i = 0; i < cleanSql.length; i++) {
+    const char = cleanSql[i];
+    const nextChar = cleanSql[i + 1];
+
+    if (char === '$' && nextChar === '$') {
+      inDollarQuote = !inDollarQuote;
+      current += '$$';
+      i++;
+      continue;
+    }
+
+    if (char === ';' && !inDollarQuote) {
+      if (current.trim().length > 0) {
+        statements.push(current.trim());
+      }
+      current = '';
+    } else {
+      current += char;
+    }
+  }
+
+  if (current.trim().length > 0) {
+    statements.push(current.trim());
+  }
+
+  return statements;
+}
+
+const statements = splitSql(sql);
 
 let applied = 0;
 for (const stmt of statements) {

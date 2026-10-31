@@ -72,7 +72,10 @@ export function computeSignoffHash(data: {
 /**
  * Retrieves installation record with order details, crew, checklist, before/after photos, and certificate info.
  */
-export async function getInstallation(id: string) {
+export async function getInstallation(
+  id: string,
+  callerUser?: { id: string; role: string }
+) {
   const inst = await prisma.installation.findUnique({
     where: { id },
     include: {
@@ -115,6 +118,17 @@ export async function getInstallation(id: string) {
 
   if (!inst) {
     throw new AppError('NOT_FOUND', 'Installation record not found', 404);
+  }
+
+  // Technician scoping: Technicians may only see installation jobs assigned to them
+  if (callerUser && callerUser.role === 'TECHNICIAN') {
+    const isCrewLead = inst.crew_lead_id === callerUser.id;
+    const isCrewMember = inst.crew?.some(
+      (c: any) => c.technician_id === callerUser.id || c.technician?.user_id === callerUser.id
+    );
+    if (!isCrewLead && !isCrewMember) {
+      throw new AppError('FORBIDDEN', 'Technicians may only view installation jobs assigned to them', 403);
+    }
   }
 
   // Fetch installation photo attachments (After photos)
@@ -222,13 +236,9 @@ export async function getInstallation(id: string) {
  * Starts field installation job with technician GPS coordinates and begins automatic time tracking.
  */
 export async function startInstallation(input: StartInstallationInput) {
-  let actorId = input.actorId;
+  const actorId = input.actorId;
   if (!actorId) {
-    const defaultUser = await prisma.user.findFirst();
-    if (defaultUser) actorId = defaultUser.id;
-  }
-  if (!actorId) {
-    throw new AppError('UNAUTHENTICATED', 'User not authenticated', 401);
+    throw new AppError('VALIDATION_FAILED', 'Technician actorId is required to start installation', 422);
   }
 
   const now = new Date();
@@ -305,10 +315,9 @@ export async function startInstallation(input: StartInstallationInput) {
  * Updates draft checklist, capacity, and test readings as work progresses on site.
  */
 export async function updateInstallationDraft(input: UpdateDraftInput) {
-  let actorId = input.actorId;
+  const actorId = input.actorId;
   if (!actorId) {
-    const defaultUser = await prisma.user.findFirst();
-    if (defaultUser) actorId = defaultUser.id;
+    throw new AppError('VALIDATION_FAILED', 'Technician actorId is required to update draft', 422);
   }
 
   const inst = await prisma.installation.findUnique({

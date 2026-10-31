@@ -393,3 +393,28 @@ export async function reconcileStockLedger(productId: string, locationId: string
   };
 }
 
+/**
+ * Reconciles all active stock levels across all locations against their ledger movements.
+ */
+export async function reconcileAllStockLedgers() {
+  const stockLevels = await prisma.stockLevel.findMany({
+    include: { product: true, location: true },
+  });
+  const results = [];
+  for (const sl of stockLevels) {
+    const res = await reconcileStockLedger(sl.product_id, sl.location_id);
+    results.push({
+      ...res,
+      productSku: sl.product.sku,
+      locationCode: sl.location.code,
+    });
+  }
+  return {
+    timestamp: new Date().toISOString(),
+    totalChecked: results.length,
+    allReconciled: results.every((r) => r.isReconciled),
+    discrepancies: results.filter((r) => !r.isReconciled),
+    details: results,
+  };
+}
+

@@ -1,0 +1,27 @@
+# SolarOS Codeowners
+# Global default
+* @aryan81006
+
+# Critical Domain & Financial Engines
+/src/domain/ @aryan81006
+/src/domain/bom.ts @aryan81006
+/src/domain/margin.ts @aryan81006
+/src/domain/reservation.ts @aryan81006
+/src/domain/warranty.ts @aryan81006
+
+# Database & Schema Migrations
+/prisma/ @aryan81006
+/prisma/schema.prisma @aryan81006
+/prisma/migrations/ @aryan81006
+
+# Security & Access Links
+/src/lib/auth.ts @aryan81006
+/src/lib/access-links.ts @aryan81006
+/src/lib/rbac.ts @aryan81006
+
+# Operations & Infrastructure
+/deployment/ @aryan81006
+/nginx/ @aryan81006
+/vercel.json @aryan81006
+/.github/workflows/ @aryan81006
+

@@ -1,23 +1,26 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import {
+  S3Client,
+  PutObjectCommand,
+  GetObjectCommand,
+  DeleteObjectCommand,
+} from '@aws-sdk/client-s3';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 
 /**
  * Private object storage abstraction (D14).
  *
- * The default driver stores objects on local disk under STORAGE_DIR
- * (default: ./.storage - NEVER under public/). Objects are only reachable
- * through the authenticated attachment endpoint, which issues short-lived
- * HMAC-signed URLs (the local-disk equivalent of presigned GETs).
- *
- * Swapping in S3/R2/MinIO later means implementing StorageDriver with the
- * same three methods - no route or service code changes.
+ * Supports both S3/R2/MinIO cloud object storage with 5-minute presigned GET URLs
+ * and a zero-dependency local disk driver with short-lived HMAC-signed URLs.
  */
 
 export interface StorageDriver {
   put(key: string, data: Buffer, mime: string): Promise<void>;
   get(key: string): Promise<Buffer>;
   delete(key: string): Promise<void>;
+  getPresignedUrl?(key: string, expiresInSeconds?: number): Promise<string>;
 }
 
 const STORAGE_ROOT = process.env.STORAGE_DIR
@@ -37,7 +40,6 @@ const localDriver: StorageDriver = {
   },
   async get(key) {
     const target = path.join(STORAGE_ROOT, key);
-    // Defence in depth: refuse path traversal
     if (!path.resolve(target).startsWith(STORAGE_ROOT)) {
       throw new Error('Invalid storage key');
     }
@@ -50,12 +52,79 @@ const localDriver: StorageDriver = {
   },
 };
 
-const driver: StorageDriver = localDriver;
+// S3 / Cloudflare R2 / MinIO Storage Driver (ADR D14)
+const S3_BUCKET = process.env.S3_BUCKET || process.env.AWS_S3_BUCKET;
+const S3_REGION = process.env.AWS_REGION || process.env.S3_REGION || 'ap-south-1';
+const S3_ENDPOINT = process.env.S3_ENDPOINT;
+
+let s3Driver: StorageDriver | null = null;
+if (S3_BUCKET) {
+  const s3Client = new S3Client({
+    region: S3_REGION,
+    endpoint: S3_ENDPOINT || undefined,
+    forcePathStyle: Boolean(S3_ENDPOINT),
+    credentials:
+      process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY
+        ? {
+            accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+            secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+          }
+        : undefined,
+  });
+
+  s3Driver = {
+    async put(key, data, mime) {
+      await s3Client.send(
+        new PutObjectCommand({
+          Bucket: S3_BUCKET,
+          Key: key,
+          Body: data,
+          ContentType: mime,
+        })
+      );
+    },
+    async get(key) {
+      const response = await s3Client.send(
+        new GetObjectCommand({
+          Bucket: S3_BUCKET,
+          Key: key,
+        })
+      );
+      if (!response.Body) throw new Error(`Empty body for key ${key}`);
+      const bytes = await response.Body.transformToByteArray();
+      return Buffer.from(bytes);
+    },
+    async delete(key) {
+      await s3Client.send(
+        new DeleteObjectCommand({
+          Bucket: S3_BUCKET,
+          Key: key,
+        })
+      );
+    },
+    async getPresignedUrl(key, expiresInSeconds = 300) {
+      return getSignedUrl(
+        s3Client,
+        new GetObjectCommand({
+          Bucket: S3_BUCKET,
+          Key: key,
+        }),
+        { expiresIn: expiresInSeconds }
+      );
+    },
+  };
+}
+
+const driver: StorageDriver = s3Driver || localDriver;
 
 export const storage = {
   put: (key: string, data: Buffer, mime: string) => driver.put(key, data, mime),
   get: (key: string) => driver.get(key),
   delete: (key: string) => driver.delete(key),
+  getPresignedUrl: (key: string, expiresInSeconds = 300) =>
+    driver.getPresignedUrl
+      ? driver.getPresignedUrl(key, expiresInSeconds)
+      : Promise.resolve(null),
 };
 
 /** Builds a storage key like `installations/<uuid>/after-<ts>-<rand>.jpg`. */
@@ -70,7 +139,7 @@ export function buildStorageKey(namespace: string, ownerId: string, originalName
 const SIGNING_SECRET =
   process.env.ACCESS_LINK_SECRET || process.env.AUTH_SECRET || 'sunpower-default-dev-secret-key-32chars!!';
 
-const SIGN_TTL_SECONDS = 15 * 60;
+const SIGN_TTL_SECONDS = 5 * 60; // 5-minute presigned GET per spec D14
 
 /** Creates an `expires.signature` pair for a storage key. */
 export function signStorageKey(key: string, ttlSeconds = SIGN_TTL_SECONDS): string {

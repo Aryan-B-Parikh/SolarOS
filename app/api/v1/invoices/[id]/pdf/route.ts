@@ -65,8 +65,11 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    invoice = await prisma.invoice.findUnique({
-      where: { id: invoiceId },
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(invoiceId);
+    invoice = await prisma.invoice.findFirst({
+      where: isUuid
+        ? { OR: [{ id: invoiceId }, { invoice_number: invoiceId }] }
+        : { invoice_number: invoiceId },
       include: {
         customer: true,
         order: true,
@@ -86,8 +89,11 @@ export async function GET(req: NextRequest) {
       );
     }
   } else if (user && ['DIRECTOR', 'SALES', 'SUPPORT', 'ACCOUNTS'].includes(user.role)) {
-    invoice = await prisma.invoice.findUnique({
-      where: { id: invoiceId },
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(invoiceId);
+    invoice = await prisma.invoice.findFirst({
+      where: isUuid
+        ? { OR: [{ id: invoiceId }, { invoice_number: invoiceId }] }
+        : { invoice_number: invoiceId },
       include: {
         customer: true,
         order: true,

@@ -258,9 +258,9 @@ export default async function CustomerPortalPage({ params }: PortalPageProps) {
     ? String(currentLead.system_type_pref).replace('_', ' ')
     : null;
 
-  // Tickets serialized for the client component
+  // Tickets serialized for the client component (using ticket_number as id so NO internal UUID is leaked)
   const portalTickets = serviceTickets.map((t: any) => ({
-    id: t.id,
+    id: t.ticket_number,
     ticketNumber: t.ticket_number,
     category: t.category,
     faultCode: t.fault_code,
@@ -480,7 +480,7 @@ export default async function CustomerPortalPage({ params }: PortalPageProps) {
         </div>
 
         {/* Phase 5: Warranty Protection — ALL units with WarrantyBar + PDF (FR-10.5) */}
-        <div className="bg-white rounded-3xl p-6 border border-slate-200 shadow-xs flex flex-col justify-between">
+        <div id="warranties" className="bg-white rounded-3xl p-6 border border-slate-200 shadow-xs flex flex-col justify-between">
           <div>
             <div className="flex items-center justify-between mb-3">
               <span className="text-xs font-bold uppercase tracking-wider text-slate-400">Phase 5 • Hardware &amp; Warranty</span>
@@ -501,33 +501,36 @@ export default async function CustomerPortalPage({ params }: PortalPageProps) {
 
             {warranties.length > 0 && (
               <div className="mt-3 space-y-3">
-                {warranties.map((w) => (
-                  <div key={w.id} className="space-y-1.5">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="text-xs font-semibold text-slate-800 truncate">
-                        {w.unit?.product?.name || w.product?.name || 'Equipment Unit'}
-                        {w.unit?.serial_number && (
-                          <span className="font-mono text-[10px] text-slate-500 ml-1.5">
-                            S/N {w.unit.serial_number}
-                          </span>
+                {warranties.map((w) => {
+                  const unitIdentifier = w.unit?.qr_code || w.unit?.serial_number;
+                  return (
+                    <div key={unitIdentifier || w.start_date.toISOString()} className="space-y-1.5">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-xs font-semibold text-slate-800 truncate">
+                          {w.unit?.product?.name || w.product?.name || 'Equipment Unit'}
+                          {w.unit?.serial_number && (
+                            <span className="font-mono text-[10px] text-slate-500 ml-1.5">
+                              S/N {w.unit.serial_number}
+                            </span>
+                          )}
+                        </span>
+                        {unitIdentifier && (
+                          <a
+                            href={`/api/v1/portal/${encodeURIComponent(rawToken)}/warranty/${encodeURIComponent(unitIdentifier)}/pdf`}
+                            className="shrink-0 inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 hover:text-emerald-800 bg-emerald-50 hover:bg-emerald-100 px-2 py-1 rounded-lg transition"
+                          >
+                            <FileDown className="w-3 h-3" /> Warranty certificate (PDF)
+                          </a>
                         )}
-                      </span>
-                      {w.unit_id && (
-                        <a
-                          href={`/api/v1/portal/${encodeURIComponent(rawToken)}/warranty/${w.unit_id}/pdf`}
-                          className="shrink-0 inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 hover:text-emerald-800 bg-emerald-50 hover:bg-emerald-100 px-2 py-1 rounded-lg transition"
-                        >
-                          <FileDown className="w-3 h-3" /> Warranty certificate (PDF)
-                        </a>
-                      )}
+                      </div>
+                      <WarrantyBar
+                        startDate={w.start_date}
+                        endDate={w.end_date}
+                        status={w.status as 'ACTIVE' | 'VOID' | 'TRANSFERRED' | 'EXPIRED'}
+                      />
                     </div>
-                    <WarrantyBar
-                      startDate={w.start_date}
-                      endDate={w.end_date}
-                      status={w.status as 'ACTIVE' | 'VOID' | 'TRANSFERRED' | 'EXPIRED'}
-                    />
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>
@@ -604,7 +607,7 @@ export default async function CustomerPortalPage({ params }: PortalPageProps) {
         </div>
 
         {/* Installed Equipment with serials + monitoring links (FR-10.4a / FR-10.9) */}
-        <div className="bg-white rounded-3xl p-6 border border-slate-200 shadow-xs flex flex-col justify-between">
+        <div id="equipment" className="bg-white rounded-3xl p-6 border border-slate-200 shadow-xs flex flex-col justify-between">
           <div>
             <div className="flex items-center justify-between mb-3">
               <span className="text-xs font-bold uppercase tracking-wider text-slate-400">Installed Equipment</span>
@@ -623,7 +626,7 @@ export default async function CustomerPortalPage({ params }: PortalPageProps) {
               <ul className="mt-3 space-y-2">
                 {installedUnits.map((unit: any) => (
                   <li
-                    key={unit.id}
+                    key={unit.qr_code || unit.serial_number || unit.product?.sku}
                     className="bg-slate-50 px-3 py-2.5 rounded-xl border border-slate-100 flex items-center justify-between gap-2"
                   >
                     <div className="min-w-0">
@@ -664,7 +667,7 @@ export default async function CustomerPortalPage({ params }: PortalPageProps) {
 
       {/* Before / After Photo Gallery (FR-10.4b) */}
       {(beforePhotos.length > 0 || afterPhotos.length > 0) && (
-        <section className="bg-white rounded-3xl p-6 border border-slate-200 shadow-xs space-y-4">
+        <section id="gallery" className="bg-white rounded-3xl p-6 border border-slate-200 shadow-xs space-y-4">
           <div className="flex items-center justify-between">
             <div>
               <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
@@ -753,7 +756,7 @@ export default async function CustomerPortalPage({ params }: PortalPageProps) {
       </section>
 
       {/* Payments & Invoices (FR-10.8) */}
-      <section className="bg-white rounded-3xl p-6 border border-slate-200 shadow-xs space-y-4">
+      <section id="invoices" className="bg-white rounded-3xl p-6 border border-slate-200 shadow-xs space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 pb-4">
           <div>
             <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
@@ -833,7 +836,7 @@ export default async function CustomerPortalPage({ params }: PortalPageProps) {
                   </thead>
                   <tbody className="divide-y divide-slate-100 text-slate-700">
                     {invoices.map((inv) => (
-                      <tr key={inv.id}>
+                      <tr key={inv.invoice_number}>
                         <td className="px-3 py-2 font-mono font-bold">{inv.invoice_number}</td>
                         <td className="px-3 py-2">{inv.type}</td>
                         <td className="px-3 py-2 text-slate-500">{formatDateIST(inv.issue_date)}</td>
@@ -853,7 +856,7 @@ export default async function CustomerPortalPage({ params }: PortalPageProps) {
                         </td>
                         <td className="px-3 py-2 text-right">
                           <a
-                            href={`/api/v1/invoices/${inv.id}/pdf?portal=${encodeURIComponent(rawToken)}`}
+                            href={`/api/v1/invoices/${encodeURIComponent(inv.invoice_number)}/pdf?portal=${encodeURIComponent(rawToken)}`}
                             className="inline-flex items-center gap-1 text-[11px] font-bold text-amber-600 hover:text-amber-700 bg-amber-50 hover:bg-amber-100 px-2.5 py-1 rounded-lg transition"
                           >
                             <FileDown className="w-3 h-3" /> Download PDF

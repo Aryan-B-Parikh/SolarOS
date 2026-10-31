@@ -66,9 +66,11 @@ export async function POST(
 
     const rawBody = await req.json().catch(() => ({}));
 
-    // Verify ticket belongs to customer
-    const ticket = await prisma.serviceTicket.findUnique({
-      where: { id: params.ticketId },
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(params.ticketId);
+    const ticket = await prisma.serviceTicket.findFirst({
+      where: isUuid
+        ? { OR: [{ id: params.ticketId }, { ticket_number: params.ticketId }] }
+        : { ticket_number: params.ticketId },
     });
 
     if (!ticket || ticket.customer_id !== customer.id) {

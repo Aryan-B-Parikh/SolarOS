@@ -89,4 +89,41 @@ describe('BOM & Margin Engine (TRD 2.4 / FR-3.1 / FR-3.8)', () => {
     assert.equal(margin.marginPercent, 13);
     assert.equal(margin.marginWarning, true);
   });
+
+  it('rejects a template that contains no solar panel product', () => {
+    const noPanelTemplate = {
+      ...dummyTemplate,
+      bom_lines: dummyTemplate.bom_lines.filter((l) => l.product.category !== 'SOLAR_PANEL'),
+    };
+    assert.throws(
+      () => generateBom(noPanelTemplate as any, { capacityKw: 3 }),
+      /must include at least one solar panel product/i
+    );
+  });
+
+  it('rejects a template that contains no inverter product', () => {
+    const noInverterTemplate = {
+      ...dummyTemplate,
+      bom_lines: dummyTemplate.bom_lines.filter((l) => l.product.category !== 'INVERTER'),
+    };
+    assert.throws(
+      () => generateBom(noInverterTemplate as any, { capacityKw: 3 }),
+      /must include at least one inverter product/i
+    );
+  });
+
+  it('dynamically uses panel rated power from template product', () => {
+    const templateWith440W = {
+      ...dummyTemplate,
+      bom_lines: dummyTemplate.bom_lines.map((l) =>
+        l.product.category === 'SOLAR_PANEL'
+          ? { ...l, product: { ...l.product, rated_power_w: 440 } }
+          : l
+      ),
+    };
+    // 3000 W / 440 Wp = 6.81 -> 7 panels
+    const res = generateBom(templateWith440W as any, { capacityKw: 3 });
+    assert.equal(res.panelCount, 7);
+    assert.equal(res.installedCapacityKwp, 3.08);
+  });
 });

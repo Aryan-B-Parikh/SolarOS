@@ -53,8 +53,14 @@ export async function GET(
     const customer = link.customer;
 
     // The unit must belong to this customer and carry a warranty.
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(params.unitId);
     const unit = await prisma.inventoryUnit.findFirst({
-      where: { id: params.unitId, customer_id: customer.id },
+      where: {
+        customer_id: customer.id,
+        OR: isUuid
+          ? [{ id: params.unitId }, { qr_code: params.unitId }, { serial_number: params.unitId }]
+          : [{ qr_code: params.unitId }, { serial_number: params.unitId }],
+      },
       include: {
         product: true,
         installation: { include: { order: { select: { order_number: true } } } },

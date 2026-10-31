@@ -8,7 +8,7 @@ export type BomRule = 'FIXED' | 'PANEL_COUNT' | 'PER_PANEL' | 'PER_KW' | 'PER_CA
 export interface BomInput {
   capacityKw: number;
   cableDistanceM?: number;
-  panelRatedWp?: number; // Defaults to 540 Wp
+  panelRatedWp?: number;
 }
 
 export interface TemplateLineData {
@@ -22,6 +22,7 @@ export interface TemplateLineData {
     sku: string;
     name: string;
     category: string;
+    rated_power_w?: number | null;
     std_cost_paise: bigint;
     sale_price_paise: bigint;
     tax_rate_bp: number;
@@ -65,8 +66,28 @@ export function generateBom(
   template: SystemTemplateData,
   input: BomInput
 ): BomCalculationResult {
+  if (!template || !template.bom_lines || template.bom_lines.length === 0) {
+    throw new Error('System template contains no BOM lines');
+  }
+
+  // Enforce template yields at least one solar panel and one inverter
+  const panelLine = template.bom_lines.find((l) => l.product?.category === 'SOLAR_PANEL');
+  if (!panelLine) {
+    throw new Error('System template must include at least one solar panel product');
+  }
+
+  const inverterLine = template.bom_lines.find((l) => l.product?.category === 'INVERTER');
+  if (!inverterLine) {
+    throw new Error('System template must include at least one inverter product');
+  }
+
   const capacityKw = input.capacityKw;
-  const panelRatedWp = input.panelRatedWp || 540;
+  if (!capacityKw || capacityKw <= 0) {
+    throw new Error('System capacity must be greater than zero');
+  }
+
+  // Dynamically resolve rated Wp: input overrides template panel's rated power, which falls back to 540 Wp
+  const panelRatedWp = input.panelRatedWp || panelLine.product.rated_power_w || 540;
   const cableDistanceM = input.cableDistanceM ?? Number(template.default_cable_distance_m) ?? 25;
   const defaultCableDistanceUsed = input.cableDistanceM === undefined || input.cableDistanceM === null;
 
@@ -74,6 +95,9 @@ export function generateBom(
   // e.g. 3000 W / 540 Wp = 5.55 -> 6 panels
   const capacityW = capacityKw * 1000;
   const panelCount = Math.ceil(capacityW / panelRatedWp);
+  if (panelCount <= 0) {
+    throw new Error('Calculated panel count must be greater than zero');
+  }
   const installedCapacityKwp = Number(((panelCount * panelRatedWp) / 1000).toFixed(2));
 
   let subtotalPaise = 0n;

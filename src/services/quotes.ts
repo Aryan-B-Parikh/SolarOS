@@ -158,6 +158,26 @@ export async function createQuote(data: CreateQuoteDto, user?: { id: string; rol
       tx
     );
 
+    if (margin.marginWarning) {
+      await recordAudit(
+        {
+          actorType: 'USER',
+          actorId: user?.id,
+          entityType: 'QUOTE',
+          entityId: quote.id,
+          action: 'MARGIN_WARNING_ACKNOWLEDGED',
+          after: {
+            quoteNumber,
+            estimatedMarginBp: margin.estimatedMarginBp,
+            targetMarginBp,
+            netPricePaise: netPricePaise.toString(),
+            totalBomCostPaise: bomResult.totalCostPaise.toString(),
+          },
+        },
+        tx
+      );
+    }
+
     return quote;
   });
 }
@@ -850,6 +870,26 @@ export async function reviseQuote(
       tx
     );
 
+    if (margin.marginWarning) {
+      await recordAudit(
+        {
+          actorType: 'USER',
+          actorId: user?.id,
+          entityType: 'QUOTE',
+          entityId: newQuote.id,
+          action: 'MARGIN_WARNING_ACKNOWLEDGED',
+          after: {
+            newQuoteNumber,
+            estimatedMarginBp: margin.estimatedMarginBp,
+            targetMarginBp,
+            netPricePaise: netPricePaise.toString(),
+            totalBomCostPaise: totalBomCostPaise.toString(),
+          },
+        },
+        tx
+      );
+    }
+
     return newQuote;
   });
 }
@@ -958,6 +998,26 @@ export async function updateQuoteLine(
       },
       tx
     );
+
+    if (margin.marginWarning) {
+      await recordAudit(
+        {
+          actorType: 'USER',
+          actorId: user?.id,
+          entityType: 'QUOTE',
+          entityId: quote.id,
+          action: 'MARGIN_WARNING_ACKNOWLEDGED',
+          after: {
+            quoteNumber: quote.quote_number,
+            estimatedMarginBp: margin.estimatedMarginBp,
+            targetMarginBp,
+            netPricePaise: netPricePaise.toString(),
+            totalBomCostPaise: totalBomCostPaise.toString(),
+          },
+        },
+        tx
+      );
+    }
 
     return updatedQuote;
   });

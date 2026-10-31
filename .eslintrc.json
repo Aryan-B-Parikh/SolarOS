@@ -6,12 +6,30 @@
       {
         "patterns": [
           {
-            "group": ["**/services/*/*", "../../*/*/services"],
+            "group": ["**/services/*/*", "../../*/*/services", "@/services/*/*"],
             "message": "Enforce module boundaries: Access other modules only through their top-level service public API."
           }
         ]
       }
     ]
-  }
+  },
+  "overrides": [
+    {
+      "files": ["src/domain/**/*.ts"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "group": ["@/services/*", "@/services", "**/services/**", "../services/**"],
+                "message": "Pure domain engines in src/domain must be deterministic and never import database services."
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
 }
 

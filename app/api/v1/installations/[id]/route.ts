@@ -6,12 +6,12 @@ export const GET = createApiHandler(
   {
     allowedRoles: ['DIRECTOR', 'TECHNICIAN', 'SALES', 'SUPPORT'],
   },
-  async ({ req }) => {
+  async ({ req, user }) => {
     const url = new URL(req.url);
     const parts = url.pathname.split('/');
     const installationId = parts[parts.indexOf('installations') + 1];
 
-    const result = await getInstallation(installationId);
+    const result = await getInstallation(installationId, user);
     return NextResponse.json(result);
   }
 );

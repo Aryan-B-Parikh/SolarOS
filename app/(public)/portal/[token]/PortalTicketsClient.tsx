@@ -164,7 +164,7 @@ export default function PortalTicketsClient({
     setError(null);
     try {
       const res = await fetch(
-        `/api/v1/portal/${encodeURIComponent(token)}/tickets/${encodeURIComponent(ticket.id)}/confirm`,
+        `/api/v1/portal/${encodeURIComponent(token)}/tickets/${encodeURIComponent(ticket.ticketNumber || ticket.id)}/confirm`,
         { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }
       );
       const data = await res.json();
@@ -191,7 +191,7 @@ export default function PortalTicketsClient({
     setError(null);
     try {
       const res = await fetch(
-        `/api/v1/portal/${encodeURIComponent(token)}/tickets/${encodeURIComponent(reopenFor.id)}/reopen`,
+        `/api/v1/portal/${encodeURIComponent(token)}/tickets/${encodeURIComponent(reopenFor.ticketNumber || reopenFor.id)}/reopen`,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
