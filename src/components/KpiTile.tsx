@@ -1,3 +1,5 @@
+'use client';
+
 import React from 'react';
 import { TrendingUp, TrendingDown, Minus } from 'lucide-react';
 import clsx from 'clsx';

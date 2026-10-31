@@ -1,3 +1,5 @@
+'use client';
+
 import React from 'react';
 import { formatDateTimeIST } from '@/lib/dates';
 import { CircleDot, User, ArrowRight } from 'lucide-react';

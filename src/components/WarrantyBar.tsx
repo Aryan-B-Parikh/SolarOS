@@ -1,3 +1,5 @@
+'use client';
+
 import React from 'react';
 import { formatDateIST } from '@/lib/dates';
 import { ShieldCheck, ShieldAlert, AlertTriangle } from 'lucide-react';

@@ -1,3 +1,5 @@
+'use client';
+
 import React from 'react';
 import { 
   Sparkles, PhoneCall, CheckCircle2, Calendar, FileCheck, 

@@ -1,3 +1,5 @@
+'use client';
+
 import React from 'react';
 import { ArrowRight, CheckCircle2, AlertCircle } from 'lucide-react';
 import clsx from 'clsx';
