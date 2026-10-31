@@ -32,6 +32,9 @@ export default function LeadDetailClient({ initialLead, technicians, templates }
   const [isCloseModalOpen, setIsCloseModalOpen] = useState(false);
   const [closeStatus, setCloseStatus] = useState<'LOST' | 'DISQUALIFIED'>('LOST');
   const [closeReason, setCloseReason] = useState('');
+  const [isReviewSurveyOpen, setIsReviewSurveyOpen] = useState(false);
+  const [rejectReason, setRejectReason] = useState('');
+  const [reviewLoading, setReviewLoading] = useState(false);
   const [noteText, setNoteText] = useState('');
 
   // Qualification form state
@@ -79,13 +82,15 @@ export default function LeadDetailClient({ initialLead, technicians, templates }
           variant: 'action' as const,
         };
       case 'SURVEY_SCHEDULED':
+        const isSurveyDone = lead.survey?.status === 'COMPLETED';
         return {
-          title: 'Site Survey in Progress',
-          description: `Survey assigned to ${lead.survey?.surveyor?.name || 'Technician'}. Awaiting roof measurements.`,
-          actionLabel: 'Awaiting Survey',
-          disabled: true,
-          disabledReason: 'Technician must submit measurements and photos from mobile field app',
-          variant: 'warning' as const,
+          title: isSurveyDone ? 'Site Survey Submitted — Awaiting Review' : 'Site Survey in Progress',
+          description: isSurveyDone
+            ? 'Survey measurements completed. Review roof sizing and approve to unlock quotation.'
+            : `Survey assigned to ${lead.survey?.surveyor?.name || 'Technician'}. Review details or open survey form.`,
+          actionLabel: isSurveyDone ? 'Review & Approve Survey' : 'Review Survey (Or Open Form)',
+          onAction: () => setIsReviewSurveyOpen(true),
+          variant: isSurveyDone ? ('success' as const) : ('action' as const),
         };
       case 'SURVEY_APPROVED':
         return {
@@ -117,6 +122,32 @@ export default function LeadDetailClient({ initialLead, technicians, templates }
           description: `Lead is closed as ${lead.status}. Reason: ${lead.lost_reason || 'None specified'}`,
           variant: 'action' as const,
         };
+    }
+  };
+
+  const handleReviewSurvey = async (action: 'APPROVE' | 'REJECT') => {
+    if (!lead.survey?.id) return;
+    if (action === 'REJECT' && !rejectReason.trim()) {
+      alert('Please enter a rejection reason');
+      return;
+    }
+    setReviewLoading(true);
+    try {
+      const res = await fetch(`/api/v1/surveys/${lead.survey.id}/review`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action, reason: action === 'REJECT' ? rejectReason.trim() : undefined }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.message || 'Survey review failed');
+      }
+      setIsReviewSurveyOpen(false);
+      window.location.reload();
+    } catch (e: any) {
+      alert(e.message || 'Error reviewing survey');
+    } finally {
+      setReviewLoading(false);
     }
   };
 
@@ -692,6 +723,78 @@ export default function LeadDetailClient({ initialLead, technicians, templates }
                   className="px-4 py-2 text-xs font-semibold rounded-lg bg-red-600 hover:bg-red-700 text-white shadow-xs"
                 >
                   Confirm Close
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* Review Survey Modal (Phase 2 / S4) */}
+      {isReviewSurveyOpen && lead.survey && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-xs">
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-xl w-full max-w-lg p-6 max-h-[90vh] overflow-y-auto space-y-4">
+            <div className="flex justify-between items-start pb-3 border-b border-slate-100">
+              <div>
+                <h2 className="text-base font-bold text-slate-900">Review Site Survey (Screen S4)</h2>
+                <p className="text-xs text-slate-500 mt-0.5">Surveyor: {lead.survey.surveyor?.name || 'Assigned Surveyor'}</p>
+              </div>
+              <span className={`text-[11px] font-bold px-2 py-0.5 rounded ${lead.survey.status === 'COMPLETED' ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'}`}>
+                {lead.survey.status}
+              </span>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3 text-xs bg-slate-50 p-4 rounded-xl border border-slate-200">
+              <div><span className="text-slate-400 block">Roof Type:</span><span className="font-bold text-slate-800">{lead.survey.roof_type || 'RCC_FLAT'}</span></div>
+              <div><span className="text-slate-400 block">Azimuth:</span><span className="font-bold text-slate-800">{lead.survey.azimuth_deg}°</span></div>
+              <div><span className="text-slate-400 block">Tilt Angle:</span><span className="font-bold text-slate-800">{lead.survey.tilt_deg}°</span></div>
+              <div><span className="text-slate-400 block">Usable Area:</span><span className="font-bold text-slate-800">{lead.survey.usable_area_sqm} m²</span></div>
+              <div><span className="text-slate-400 block">Shading:</span><span className="font-bold text-slate-800">{lead.survey.shading || 'NONE'}</span></div>
+              <div><span className="text-slate-400 block">Cable Distance:</span><span className="font-bold text-slate-800">{lead.survey.cable_distance_m} m</span></div>
+              {lead.survey.notes && <div className="col-span-2 mt-2 pt-2 border-t border-slate-200"><span className="text-slate-400 block">Notes:</span><span className="text-slate-700 italic">{lead.survey.notes}</span></div>}
+            </div>
+
+            <div className="p-3 bg-blue-50 border border-blue-200 rounded-xl text-xs text-blue-900 flex justify-between items-center">
+              <span>Open mobile survey form:</span>
+              <a href={`/tech/survey/${lead.survey.id}`} target="_blank" rel="noreferrer" className="font-bold underline text-blue-700 hover:text-blue-900">
+                Open Survey Form →
+              </a>
+            </div>
+
+            <div className="space-y-2 pt-2">
+              <label className="block text-xs font-semibold text-slate-700">Rejection Reason (if rejecting):</label>
+              <input
+                type="text"
+                value={rejectReason}
+                onChange={(e) => setRejectReason(e.target.value)}
+                placeholder="e.g. Inadequate roof area or heavy shading"
+                className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg"
+              />
+            </div>
+
+            <div className="flex justify-between items-center pt-4 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setIsReviewSurveyOpen(false)}
+                className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-lg"
+              >
+                Close
+              </button>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  disabled={reviewLoading}
+                  onClick={() => handleReviewSurvey('REJECT')}
+                  className="px-4 py-2 text-xs font-semibold text-red-700 bg-red-100 hover:bg-red-200 rounded-lg"
+                >
+                  Reject Survey
+                </button>
+                <button
+                  type="button"
+                  disabled={reviewLoading}
+                  onClick={() => handleReviewSurvey('APPROVE')}
+                  className="px-4 py-2 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg"
+                >
+                  {reviewLoading ? 'Processing...' : 'Approve Survey & Sizing'}
                 </button>
               </div>
             </div>
