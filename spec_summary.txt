@@ -1,0 +1,72 @@
+One modular-monolith web app (working name SunPower Ops: Next.js, TypeScript, PostgreSQL) takes a customer from first enquiry to the end of a 20-year panel warranty. The MVP is scoped to build and demo in 24 hours; every later phase is called out separately. [v1.1] The MVP now includes a customer portal (secure expiring links, no login), four team members, and the added features listed in Part 1.
+1. PRD
+2. TRD
+What each role sees and does, screen by screen
+Phases, tasks, acceptance criteria, tests, 24-hour schedule, team split
+The crew records start and finish times, confirms system size and uploads roof photos on a phone or tablet; the homeowner signs on screen.
+Migrations and API contracts have one owner: Member 1 owns prisma/ and the shared Zod contract package; CODEOWNERS requires their review; contracts are frozen at the start of each phase
+1. PRD: Product Requirements
+Call checklist records shadow-free roof area, monthly bill or units, grid connection, sanctioned load and phase
+Customer signs on screen; a completion certificate PDF is generated and shared by link
+2. TRD: Technical Requirements
+Smooth capture on touch screens
+Crew allocation scorer. Hard constraints first: every crew member is free on the date (no leave, under max jobs per day), the crew lead holds the required skill (battery skill for Off-Grid), and crew size matches capacity (2 for up to 3 kW, 3 for 4 to 5 kW; configurable). Remaining crews are ranked:
+3.3 Screen inventory
+Screen
+3.4 Key screens in detail
+Installation job (S15). One step per screen with a progress bar at the top and the primary button at the bottom. Start captures time and location. The checklist (stands, panels, wiring, earthing, power test) uses large toggles and must be fully ticked. Photos require three named shots (array, inverter, earthing) and allow more; survey photos are shown as Before beside the After shots. The sign-off screen turns the device toward the customer: large type summary, serial list, signature pad, name field. If the customer cannot sign, the crew lead records a typed name plus attestation, flagged for review.
+Start and finish times, mandatory checklist, system size, 3+ photos; customer signs on screen
+Primary keys are uuid (gen_random_uuid()); human-readable numbers (L-2026-0142, Q-2026-0098, SO-2026-0061) come from number_sequences. Customer-facing screens and APIs use these numbers, never UUIDs [v1.1].
+lead_number, customer_id, source, status, owner_id, requested_capacity_kw, system_type_pref, wants_subsidy, monthly_bill_paise, monthly_units, tariff_paise, roof_area_sqm, grid_ok, sanctioned_load_kw, phase, lost_reason, first_contacted_at, sla_due_at
+Stock screen, reservation, low-stock alerts
+REST over JSON under /api/v1, session cookie auth (public and portal routes use tokens), Zod-validated bodies, errors as in TRD 2.7. Mutations from the field app and the portal accept an idempotencyKey. Contracts live in one shared package owned by Member 1 (D17).
+The build runs in ten phases over 24 hours, ordered so a working enquiry-to-accepted-quote slice (including the customer's view and acceptance) is live on staging by hour 10 and the full demo passes by hour 24. Production work after that is listed in 6.8. [v1.1] The scope added in this version is large for 24 hours; 6.6 says what to cut first.
+Phase
+Phases run in sequence while the four lanes work in parallel inside each; the hour-16 and hour-22 gates are where the cut list in 6.6 is applied if the build is behind.
+Four members (engineers or coding agents), each owning a whole product area, with QA and DevOps shared [v1.1]. Within each phase the lanes work in parallel against the agreed API contract (Backend Schema 5.6).
+Member
+Member 4 owns a complete product area, not leftover tasks.
+Phase
+Member 1
+Member 2
+Member 3
+Member 4
+Supplier and PO screens
+Member 1 reviews every change to prisma/ and the contract package (D17).
+A phase is done only when its acceptance criteria pass on staging, not when the code is written.
+If a phase overruns by more than an hour, cut from the list in 6.6 rather than borrowing from Phase 9.
+6.3 Phases
+Phase 0: Foundations (hours 0 to 2)
+Auth.js credentials with Argon2id and database sessions; requireRole guard and the can() matrix from TRD 2.6.
+Phase 1: Enquiry to qualified lead (hours 2 to 5)
+Objective: no enquiry can be lost (C1) and the customer can see their request. Depends on: Phase 0.
+Phase 2: Survey and AI site assessment (hours 5 to 7)
+Objective: a sized, surveyed and approved site (C2, C12). Depends on: Phase 1.
+Phase 3: Quote and BOM (hours 7 to 10)
+Objective: a correct quote from a template in one click, which the customer can accept (C3). Depends on: Phase 2.
+Acceptance: 3 kW On-Grid with a 25 m cable run yields the 12 lines in TRD 2.4; sending before approval returns SURVEY_NOT_APPROVED; a sales discount above 5% returns DISCOUNT_NEEDS_APPROVAL; a quote below target margin shows the warning; version 1 becomes read-only after a revision; the customer accepts on the portal after the last-four check.
+Phase 4: Orders, payments, reservation, scheduling (hours 10 to 13)
+Objective: a confirmed order reaches the warehouse and crew automatically (C4, C5). Depends on: Phase 3.
+Phase 5: Inventory, QR, purchasing and dispatch (hours 13 to 16)
+Objective: every serialized unit is scanned out, linked to its customer, and its warranty starts on the right event (C6, C7). Depends on: Phase 4.
+Phase 6: Installation field app (hours 16 to 18)
+Objective: proof of work with customer acceptance (C8). Depends on: Phase 5.
+Acceptance: sign-off with fewer than 3 photos returns PHOTOS_REQUIRED; sign-off with any checklist item missing returns CHECKLIST_INCOMPLETE; sign-off sets the order INSTALLED, issues the certificate and computes profit; a draft survives a reload; the gallery shows survey photos as Before; every screen works at 360 px.
+Phase 7: Service and warranty (hours 18 to 20)
+Objective: support handles a breakdown call in seconds, the customer can raise and track requests, and billing is correct (C9). Depends on: Phase 5.
+Phase 8: Analytics, finance, predictive maintenance (hours 20 to 22)
+Objective: the director sees which jobs made money and what is unfinished (C10, C11). Depends on: Phases 4 to 7.
+Phase 9: Hardening and release (hours 22 to 24)
+Objective: the demo scenario passes end to end and the system is documented for another team. Depends on: all phases.
+Acceptance: the demo test passes three runs in a row; no serious axe violations on those screens; every API route has an authorization test; no portal response contains a UUID or another customer's data; production is live.
+6.4 Verification after each phase
+Run the phase's unit, integration and end-to-end tests.
+Read every failure; never mark a phase done on assumed success.
+Walk the phase's acceptance criteria on staging and tick them off.
+Key screens
+Drafts and retry queue now; full offline mode in Phase 10
+Legacy import in Phase 12
+Create the Vercel project in the Mumbai region; set every variable in TRD 2.10.
+Phase
+6.9 Final deliverables
+Files and components changed, by phase

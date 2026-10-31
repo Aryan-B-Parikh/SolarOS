@@ -1,0 +1,300 @@
+[2130] 6.2 Team and working rules
+[2131] Four members (engineers or coding agents), each owning a whole product area, with QA and DevOps shared [v1.1]. Within each phase the lanes work in parallel against the agreed API contract (Backend Schema 5.6).
+[2132] Member
+[2133] Area
+[2134] Owns
+[2135] 1
+[2136] Backend architecture
+[2137] Database and migrations, authentication, shared API contracts, core business engines (BOM, reservation, warranty, state machines), audit and outbox, CI
+[2138] 2
+[2139] Business frontend
+[2140] CRM, quotations and PDF, orders, schedule, director dashboard, finance and accounts
+[2141] 3
+[2142] Operations frontend
+[2143] Inventory and purchasing, QR labels, dispatch, technician PWA (survey, installation, sign-off)
+[2144] 4
+[2145] Customer experience and integration
+[2146] Customer portal and link security, site assessment (calculator, AI summary, photo analysis), service workflow (tickets, service desk, warranty verdicts in the UI), customer notifications, integration and end-to-end testing
+[2147] Member 4 owns a complete product area, not leftover tasks.
+[2148] Phase
+[2149] Member 1
+[2150] Member 2
+[2151] Member 3
+[2152] Member 4
+[2153] 0
+[2154] Schema, auth, CI, seed, module lint rule
+[2155] Staff shell, design tokens
+[2156] PWA shell, scanner spike
+[2157] Access-link service, portal shell, AI client
+[2158] 1
+[2159] Leads service, duplicate detection
+[2160] Lead board and detail
+[2161] Offline queue base
+[2162] Public form, portal status tracker
+[2163] 2
+[2164] Survey service, review API
+[2165] Lead detail integration
+[2166] Survey form
+[2167] Calculator, AI summary, photo analysis, assessment panel
+[2168] 3
+[2169] BOM engine, quote service, margin
+[2170] Quote builder, branded PDF
+[2171] Supplier and PO screens
+[2172] Portal quote view, accept, reject
+[2173] 4
+[2174] Payments, reservation, confirm
+[2175] Order detail, schedule
+[2176] Stock overview, PO receiving
+[2177] Portal order status, outbox delivery tracking
+[2178] 5
+[2179] Dispatch service, warranty engine
+[2180] Invoices, accounts
+[2181] Scan, dispatch, QR labels, public warranty page
+[2182] Portal equipment and warranties, warranty PDF
+[2183] 6
+[2184] Installation and sign-off service
+[2185] Dashboard base
+[2186] Job stepper, checklist, gallery
+[2187] Portal installation progress, certificate, gallery
+[2188] 7
+[2189] Search, warranty checks
+[2190] Chargeable invoice generation
+[2191] Replacement scan
+[2192] Tickets service, service desk, portal tickets, fault codes
+[2193] 8
+[2194] Analytics queries, maintenance and reminder jobs
+[2195] Trend, top-profit, alerts widget
+[2196] PWA hardening
+[2197] Integration suite
+[2198] 9
+[2199] Authorization tests, OpenAPI
+[2200] axe pass
+[2201] Device tests
+[2202] Full demo end-to-end
+[2203] Working rules:
+[2204] Trunk-based development; small pull requests; CI must be green to merge.
+[2205] Member 1 reviews every change to prisma/ and the contract package (D17).
+[2206] A phase is done only when its acceptance criteria pass on staging, not when the code is written.
+[2207] Domain engines land with their unit tests in the same pull request.
+[2208] If a phase overruns by more than an hour, cut from the list in 6.6 rather than borrowing from Phase 9.
+[2209] 6.3 Phases
+[2210] Phase 0: Foundations (hours 0 to 2)
+[2211] Objective: a deployable skeleton with auth, roles, the full schema and seed data. Depends on: nothing.
+[2212] Files: package.json, prisma/schema.prisma, prisma/migrations/0001_init, 0002_constraints.sql, prisma/seed.ts, src/lib/{db,auth,rbac,money,dates,errors,logger,access-links,idempotency}.ts, app/(staff)/layout.tsx, .github/workflows/ci.yml, docker-compose.yml, .env.example.
+[2213] Scaffold Next.js (TypeScript strict), Tailwind, shadcn/ui, ESLint (with the module-boundary rule), Prettier, Vitest, Playwright.
+[2214] Write the Prisma schema for all 53 tables; add the SQL migration with CHECKs, partial indexes, triggers, views and the ledger and warranty REVOKEs.
+[2215] Auth.js credentials with Argon2id and database sessions; requireRole guard and the can() matrix from TRD 2.6.
+[2216] Money (paise, lakh formatting) and dates (IST calendar, add months) helpers with tests.
+[2217] Route wrapper handler(schema, permission, fn) that validates, authorizes, maps domain errors and logs; idempotency helper.
+[2218] Access-link service: issue, hash, verify, revoke, lock.
+[2219] Idempotent seed script (Backend Schema 5.8).
+[2220] CI pipeline; staging on Vercel with pooled database and bucket.
+[2221] Acceptance: every seeded role can log in; a technician calling an analytics route gets 403; migrate and seed run on an empty database; inserting negative stock is refused by the database; a cross-module table write fails the lint rule; CI green; staging URL live.
+[2222] Tests: unit tests for money, dates and access links; integration test that migrations apply and constraints fire.
+[2223] Phase 1: Enquiry to qualified lead (hours 2 to 5)
+[2224] Objective: no enquiry can be lost (C1) and the customer can see their request. Depends on: Phase 0.
+[2225] Files: app/(public)/enquiry, app/(public)/portal/[token], app/(staff)/leads/*, app/api/v1/public/enquiries, app/api/v1/leads/*, src/services/leads.ts, src/domain/state-machines/lead.ts, src/domain/duplicates.ts.
+[2226] Public form with rate limit, honeypot and consent; match customer by phone; confirmation with portal link.
+[2227] Round-robin assignment to active sales users; SLA due time.
+[2228] Duplicate detection: phone exact match; address similarity flag.
+[2229] Lead board by stage and lead detail with call checklist, activity log and duplicate flags.
+[2230] Lead state machine and transition endpoint; manual enquiry entry for WhatsApp and phone.
+[2231] Overdue-lead flag and notification through the outbox; portal tracker shows Request received.
+[2232] Acceptance: a submitted form appears on the assigned board within 2 seconds; a repeat phone links to the existing customer; the same address with a different phone raises a flag and does not merge; an invalid transition returns 409; no delete route exists; an uncontacted lead is flagged once its SLA passes.
+[2233] Tests: unit lead transitions and duplicate scoring; integration enquiry to assignment; E2E form to board.
+[2234] Phase 2: Survey and AI site assessment (hours 5 to 7)
+[2235] Objective: a sized, surveyed and approved site (C2, C12). Depends on: Phase 1.
+[2236] Files: src/domain/assessment.ts, src/services/{surveys,assessments}.ts, src/lib/ai.ts, app/(field)/tech/survey/[id], assessment panel in app/(staff)/leads/[id].
+[2237] Assessment calculator with settings-driven constants and Estimate labelling.
+[2238] AI summary: Zod-validated JSON, 8-second timeout, templated fallback, model and prompt version stored.
+[2239] Survey scheduling, mobile survey form, presigned photo upload.
+[2240] Advisory photo analysis: observations only, feature-flagged, Not analysed fallback.
+[2241] Survey review: approve or reject with reason; customer status updates.
+[2242] Acceptance: the worked example returns 3 kW, 4,928 kWh and Rs 34,493 (each to within 1); with no API key the summary and photo analysis fall back without an error; photo findings never change the calculator output; approval moves the lead to SURVEY_APPROVED and the portal shows Survey approved; photos land in the bucket with attachment rows.
+[2243] Tests: table-driven calculator tests (roof cap, sanctioned-load cap, heavy shading, bill-only input); AI parser rejects malformed output; integration survey approval.
+[2244] Phase 3: Quote and BOM (hours 7 to 10)
+[2245] Objective: a correct quote from a template in one click, which the customer can accept (C3). Depends on: Phase 2.
+[2246] Files: src/domain/{bom,margin}.ts, src/services/quotes.ts, app/(staff)/quotes/*, app/(public)/q/[token], src/lib/pdf/quote.tsx.
+[2247] BOM engine with the five quantity rules, reading the template's panel product.
+[2248] Quote creation: per-line tax, discount limits and approval, indicative subsidy line, validity date, estimated margin and warning.
+[2249] Versioning; send guarded by survey approval; public link, accept and reject; branded PDF with savings summary.
+[2250] Acceptance creates the order from a snapshot and marks the lead WON; rejection records a reason and notifies sales.
+[2251] Acceptance: 3 kW On-Grid with a 25 m cable run yields the 12 lines in TRD 2.4; sending before approval returns SURVEY_NOT_APPROVED; a sales discount above 5% returns DISCOUNT_NEEDS_APPROVAL; a quote below target margin shows the warning; version 1 becomes read-only after a revision; the customer accepts on the portal after the last-four check.
+[2252] Tests: BOM snapshot test for every template plus edge cases (missing cable distance, rounding); integration quote to order; E2E public acceptance.
+[2253] Gate, hour 10: vertical slice. Enquiry to accepted quote runs on staging, including the customer's portal view.
+[2254] Phase 4: Orders, payments, reservation, scheduling (hours 10 to 13)
+[2255] Objective: a confirmed order reaches the warehouse and crew automatically (C4, C5). Depends on: Phase 3.
+[2256] Files: src/services/{orders,payments,scheduling}.ts, src/domain/{reservation,crew-scoring}.ts, app/(staff)/orders/[id], app/(staff)/schedule.
+[2257] Payments with idempotency keys; auto-confirm at the advance threshold; director override.
+[2258] Reservation with row locks; shortage display; dispatch and dispatch lines created.
+[2259] Installation job and crew suggestions; week grid to confirm crew and date.
+[2260] Cancel releases reservations; subsidy checklist.
+[2261] Outbox delivery tracking (statuses, retries, dead-letter alert); portal order and date status.
+[2262] Acceptance: a 30% advance confirms the order and cuts available stock by the BOM quantities in one transaction; replaying the same payment request changes nothing; two simultaneous confirmations competing for the last inverter leave one reserved and one short, never negative stock; suggestions respect every hard constraint; cancelling restores availability; a failed provider send retries and ends DEAD after five attempts.
+[2263] Tests: unit scorer; integration concurrency test with two parallel transactions; confirm and cancel round trip; outbox retry test.
+[2264] Phase 5: Inventory, QR, purchasing and dispatch (hours 13 to 16)
+[2265] Objective: every serialized unit is scanned out, linked to its customer, and its warranty starts on the right event (C6, C7). Depends on: Phase 4.
+[2266] Files: src/services/{inventory,purchasing,dispatch}.ts, src/domain/warranty.ts, src/lib/qr.ts, app/(staff)/{inventory,purchasing}/*, app/(staff)/dispatch/[id], app/(field)/tech/scan, app/(public)/w/[code].
+[2267] Suppliers and purchase orders; stock receipt with serial capture, unit creation, movements and weighted average cost, optionally against a PO; QR label sheet whose QR opens the public warranty page.
+[2268] Stock view, low-stock alerts on available quantity, audited adjustments.
+[2269] Camera scanner component (BarcodeDetector with ZXing fallback) and scan rules with clear errors; unscan while picking.
+[2270] Depart: movements, levels, reservations consumed, database trigger guards incomplete dispatch. Deliver: units to customer, warranties created per start basis; warranty certificate PDF.
+[2271] Public warranty page and portal equipment and warranty views.
+[2272] Acceptance: receiving 10 inverters creates 10 units and 10 movements; receiving against a PO updates quantity received and PO status; a duplicate serial is refused; a wrong product returns WRONG_PRODUCT; departure stays locked until complete and the database refuses it even if the service check is bypassed; after delivery every unit has its customer and date, and warranties end on the right day; the public warranty page shows dates and status with no customer fields; ledger totals equal stock_levels.
+[2273] Tests: warranty date tests (month ends, a start on 29 Feb 2028, both start bases); integration receipt to delivery; ledger reconciliation test.
+[2274] Gate, hour 16: stock to site. A confirmed order can be dispatched and delivered with warranties.
+[2275] Phase 6: Installation field app (hours 16 to 18)
+[2276] Objective: proof of work with customer acceptance (C8). Depends on: Phase 5.
+[2277] Files: app/(field)/tech/today, app/(field)/tech/jobs/[id]/*, src/services/installations.ts, src/lib/pdf/certificate.tsx, PWA manifest and service worker.
+[2278] Today list and job stepper; start with location; mandatory checklist (stands, panels, wiring, earthing, power test); capacity and test reading.
+[2279] Photo capture with client resize and an IndexedDB retry queue; before/after gallery.
+[2280] Signature pad, sign-off hash, certificate PDF and public link; automatic time log.
+[2281] Hold and reschedule; installable PWA; portal installation progress, gallery and certificate.
+[2282] Acceptance: sign-off with fewer than 3 photos returns PHOTOS_REQUIRED; sign-off with any checklist item missing returns CHECKLIST_INCOMPLETE; sign-off sets the order INSTALLED, issues the certificate and computes profit; a draft survives a reload; the gallery shows survey photos as Before; every screen works at 360 px.
+[2283] Tests: integration sign-off guard; E2E on an emulated mid-range Android viewport.
+[2284] Phase 7: Service and warranty (hours 18 to 20)
+[2285] Objective: support handles a breakdown call in seconds, the customer can raise and track requests, and billing is correct (C9). Depends on: Phase 5.
+[2286] Files: src/services/{search,tickets,warranty}.ts, app/(staff)/service/*, portal ticket pages.
+[2287] Global search (phone, trigram name, serial, document numbers); customer view with warranty bars.
+[2288] Warranty check; ticket opening with automatic verdict, fault code and priority; assignment and visit.
+[2289] Parts and replacement scan: old unit to RMA, new unit installed, warranty transferred with history kept.
+[2290] Resolve (service invoice when chargeable), customer confirm by portal or phone, reopen; exclusion with approval.
+[2291] Portal: raise a request, track status, confirm or reopen, download invoices.
+[2292] Acceptance: search by phone or serial answers in under 300 ms on seed data; the May 2025 inverter is IN_WARRANTY and costs nothing; the March 2023 one is OUT_OF_WARRANTY and resolving it creates an invoice for parts and labour; a replacement keeps the original end date and the original warranty row remains as TRANSFERRED; CLOSED without confirmation is refused; a portal-raised ticket gets a verdict and an SLA from its priority.
+[2293] Tests: eligibility tests on the end date and the day after; integration replacement chain; E2E service desk and portal ticket.
+[2294] Phase 8: Analytics, finance, predictive maintenance (hours 20 to 22)
+[2295] Objective: the director sees which jobs made money and what is unfinished (C10, C11). Depends on: Phases 4 to 7.
+[2296] Files: src/services/analytics.ts, src/domain/maintenance.ts, app/(staff)/{dashboard,analytics,accounts}, app/api/v1/cron/maintenance.
+[2297] KPI queries per period with IST boundaries; profit per project; pending steps; open tickets; low stock.
+[2298] Revenue trend chart, top-profit jobs, alerts widget (loss-making jobs, expiring warranties, low stock, uncontacted leads).
+[2299] Expenses, technician hours and payable summary, invoices list.
+[2300] CSV and PDF export; expiring share links.
+[2301] Maintenance rules job, 30-day customer warranty reminder, alert list, ticket from alert.
+[2302] Acceptance: October 2026 dashboard figures match a hand-calculated fixture to the paisa; the seeded loss-making project shows red and appears in the alerts widget; a share link is read-only and stops working after expiry; running the maintenance job twice creates no duplicate alerts or reminders.
+[2303] Tests: unit profitability and maintenance rules; integration view against fixture; period boundary at 23:59 IST.
+[2304] Gate, hour 22: feature freeze.
+[2305] Phase 9: Hardening and release (hours 22 to 24)
+[2306] Objective: the demo scenario passes end to end and the system is documented for another team. Depends on: all phases.
+[2307] Playwright test of the full demo (App Flow 4.4), including portal steps.
+[2308] Authorization test for every route and role; token tests for portal links (expired, revoked, locked, wrong customer); rate-limit test on public routes.
+[2309] axe accessibility pass on S1, S7, S13, S15, S18, S19, S22, S23.
+[2310] OpenAPI document generated from the Zod schemas; README, runbook, environment guide, architecture decision records.
+[2311] Production deploy and release tag.
+[2312] Acceptance: the demo test passes three runs in a row; no serious axe violations on those screens; every API route has an authorization test; no portal response contains a UUID or another customer's data; production is live.
+[2313] 6.4 Verification after each phase
+[2314] Run the phase's unit, integration and end-to-end tests.
+[2315] Run ESLint and the Prettier check.
+[2316] Run tsc --noEmit.
+[2317] Run next build.
+[2318] Read every failure; never mark a phase done on assumed success.
+[2319] Fix, then re-run the failing checks.
+[2320] Walk the phase's acceptance criteria on staging and tick them off.
+[2321] Level
+[2322] Tool
+[2323] Covers
+[2324] Gate
+[2325] Unit
+[2326] Vitest
+[2327] Domain engines
+[2328] 90% line coverage on src/domain
+[2329] Integration
+[2330] Vitest + real PostgreSQL
+[2331] Services, constraints, triggers, concurrency, ledger reconciliation, outbox
+[2332] All pass
+[2333] End-to-end
+[2334] Playwright
+[2335] Demo scenario; desktop, mobile and portal viewports
+[2336] Passes 3 runs in a row
+[2337] Accessibility
+[2338] axe-core in Playwright
+[2339] Key screens
+[2340] No serious violations
+[2341] Authorization
+[2342] Generated route x role tests, plus token tests
+[2343] Every API route and portal link state
+[2344] All pass
+[2345] 6.5 Risks
+[2346] Risk
+[2347] Likelihood
+[2348] Impact
+[2349] Mitigation
+[2350] Stock goes negative or drifts
+[2351] Medium
+[2352] High
+[2353] Database CHECKs, row locks, concurrency test, nightly ledger reconciliation
+[2354] Seed BOMs differ from real kits
+[2355] Medium
+[2356] High
+[2357] Solar engineer signs off every template (including the On-Grid charge controller, Q4) before go-live; template editor with live preview
+[2358] Camera scanning fails on some phones or labels
+[2359] Medium
+[2360] Medium
+[2361] ZXing fallback; logged manual entry; test on three devices
+[2362] Weak network on roofs loses data
+[2363] High
+[2364] Medium
+[2365] Drafts and retry queue now; full offline mode in Phase 10
+[2366] 24 hours is not enough [v1.1: portal, purchasing and photo analysis added]
+[2367] High
+[2368] High
+[2369] Hour-10 gate; cut list below; Later items never started early; consider a longer window
+[2370] Customer link leaked or guessed
+[2371] Low
+[2372] High
+[2373] 128-bit tokens, hashed storage, expiry, revocation, last-four verification, lockout, no PII on public warranty pages
+[2374] Notifications silently fail
+[2375] Medium
+[2376] Medium
+[2377] Outbox with delivery status, retries and dead-letter alert (D6)
+[2378] Past customers missing, so old warranty claims show UNKNOWN_UNIT
+[2379] High
+[2380] Medium
+[2381] Legacy import in Phase 12
+[2382] Records must outlive vendors for 20+ years
+[2383] Low
+[2384] High
+[2385] Open-format exports; tested backups; standard PostgreSQL
+[2386] AI unavailable or wrong
+[2387] Low
+[2388] Low
+[2389] Calculator owns every number; templated fallback; photo analysis is advisory
+[2390] 6.6 Cut list if behind
+[2391] Cut in this order, keeping the demo path intact: manufacturer monitoring link (FR-10.9); revenue trend chart and top-profit table (FR-8.9); roof-photo analysis (FR-2.7); before/after pairing in the gallery (photos stay); purchase orders (FR-5.8; receipts without a PO keep working); margin warning (FR-3.8); then share links (keep CSV export); PDF exports other than the quote and certificate; maintenance rules beyond cleaning and warranty-ending; automatic crew suggestions (manual pick stays); invoice PDF (HTML view instead).
+[2392] 6.7 Deployment
+[2393] Create PostgreSQL in AWS ap-south-1 with daily backups, 7-day point-in-time recovery and a connection pooler.
+[2394] Create the R2 bucket (private) and an access key scoped to it.
+[2395] Create the Vercel project in the Mumbai region; set every variable in TRD 2.10.
+[2396] Deploy; the release step runs prisma migrate deploy. Run the seed on staging only.
+[2397] Create the director account with the admin:create script, then the other users from Settings; enter company branding and target margin.
+[2398] Schedule cron calls: maintenance and warranty reminders daily at 02:00 IST (20:30 UTC), outbox every 5 minutes, ledger reconciliation daily.
+[2399] Connect Sentry and the uptime monitor to /api/health.
+[2400] Smoke test: log in per role, submit an enquiry, open the customer portal link, look up a seeded serial, open the dashboard.
+[2401] 6.8 After the 24 hours
+[2402] Phase
+[2403] Scope
+[2404] Why
+[2405] 10
+[2406] Full offline field app; WhatsApp Business API intake and notifications
+[2407] Roof connectivity; most enquiries arrive on WhatsApp
+[2408] 11
+[2409] GST e-invoicing, accounting export, payroll export; OTP for portal sensitive actions
+[2410] Accounts works in other tools; stronger customer verification
+[2411] 12
+[2412] Import past customers and serials from paper and spreadsheets
+[2413] Warranty lookups for installs before go-live
+[2414] 13
+[2415] Yield calibration from real meters, satellite roof data, telemetry-based maintenance
+[2416] Turn rules into predictions
+[2417] 14
+[2418] Maintenance contracts in the portal; customer accounts if ever required
+[2419] Fewer support calls
+[2420] 6.9 Final deliverables
+[2421] Summary of what was implemented, mapped to requirement IDs
+[2422] Architecture decision records for D1 to D17
+[2423] Files and components changed, by phase
+[2424] Database migrations and OpenAPI document
+[2425] .env.example and configuration guide
+[2426] Test report from CI (unit, integration, E2E, accessibility, authorization)
+[2427] Known limitations and remaining risks
+[2428] Deployment runbook and rollback steps
+[2429] Follow-up work that is genuinely needed (6.8)

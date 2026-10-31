@@ -1,6 +1,25 @@
 import { test, expect } from '@playwright/test';
+import { signJwt, SESSION_COOKIE_NAME } from '../../src/lib/jwt';
 
 test.describe('Mobile Field Technician Operations (PWA)', () => {
+  test.beforeEach(async ({ context }) => {
+    const token = signJwt({
+      userId: 'b5a949e3-5fdb-4629-9e5f-3cfca523f167',
+      email: 'tech1@sunpower.ops',
+      name: 'Manoj Kumar',
+      role: 'TECHNICIAN',
+      isFieldDevice: true,
+    });
+    await context.addCookies([
+      {
+        name: SESSION_COOKIE_NAME,
+        value: token,
+        url: 'http://localhost:3000',
+        httpOnly: true,
+        sameSite: 'Lax',
+      },
+    ]);
+  });
   test('technician views daily job agenda and opens installation stepper', async ({ page }) => {
     // 1. Tech Today Page
     await page.goto('/tech/today', { waitUntil: 'domcontentloaded' });

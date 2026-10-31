@@ -36,19 +36,22 @@ test.describe('Public Enquiry & Customer Portal Journey', () => {
       await pincodeInput.fill('380054');
     }
 
-    const consentCheckbox = page.locator('input[type="checkbox"]');
-    if (await consentCheckbox.count() > 0) {
-      await consentCheckbox.first().check();
+    // Step 1: Click Continue to Step 2
+    await page.getByRole('button', { name: /continue to solar needs/i }).click();
+    await page.waitForTimeout(500);
+
+    // Step 2: Check consent & Submit
+    const consentBox = page.locator('input[name="consent"], #consent');
+    if (await consentBox.count() > 0) {
+      await consentBox.first().check();
     }
 
-    // Submit
-    const submitButton = page.locator('button[type="submit"]');
-    await submitButton.click();
+    await page.getByRole('button', { name: /submit solar enquiry/i }).click();
 
     // Verify submission success state or confirmation message
     await expect(
-      page.locator('text=/received|success|enquiry|portal/i').first()
-    ).toBeVisible({ timeout: 10000 });
+      page.locator('text=/received|success|enquiry|portal|thank you|request received/i').first()
+    ).toBeVisible({ timeout: 15000 });
   });
 
   test('public warranty lookup renders equipment warranty status', async ({ page }) => {

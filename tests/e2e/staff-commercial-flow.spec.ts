@@ -1,6 +1,24 @@
 import { test, expect } from '@playwright/test';
+import { signJwt, SESSION_COOKIE_NAME } from '../../src/lib/jwt';
 
 test.describe('Staff Commercial & CRM Flow', () => {
+  test.beforeEach(async ({ context }) => {
+    const token = signJwt({
+      userId: 'b73b9cd4-aa9f-4359-b7ad-1fd99c45f55e',
+      email: 'director@sunpower.ops',
+      name: 'Rajesh Shah (Director)',
+      role: 'DIRECTOR',
+    });
+    await context.addCookies([
+      {
+        name: SESSION_COOKIE_NAME,
+        value: token,
+        url: 'http://localhost:3000',
+        httpOnly: true,
+        sameSite: 'Lax',
+      },
+    ]);
+  });
   test('navigates through director dashboard and CRM leads board', async ({ page }) => {
     // 1. Dashboard
     await page.goto('/dashboard', { waitUntil: 'domcontentloaded' });

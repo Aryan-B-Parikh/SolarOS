@@ -1,0 +1,162 @@
+[149] No duplicate payments, orders or dispatches
+[150] D17 [v1.1]
+[151] Migrations and API contracts have one owner: Member 1 owns prisma/ and the shared Zod contract package; CODEOWNERS requires their review; contracts are frozen at the start of each phase
+[152] No conflicts between parallel developers
+[153] Open questions (confirmed as final defaults)
+[154] ID
+[155] Question
+[156] Confirmed answer
+[157] Q1
+[158] What advance percentage confirms an order?
+[159] 30%
+[160] Q2
+[161] Is there a workmanship warranty on the installation, and for how long?
+[162] Not tracked in the MVP; schema supports it (start basis sign-off)
+[163] Q3
+[164] Does a replacement unit inherit the original warranty end date or get a fresh term?
+[165] Inherits the remaining period
+----------------------------------------
+[1841] CREATE VIEW v_project_profitability ASSELECT o.id AS order_id, o.order_number, o.customer_id, o.status,       o.subtotal_paise - o.discount_paise AS net_revenue_paise,       COALESCE(m.cost, 0) AS materials_paise,       COALESCE(l.cost, 0) AS labour_paise,       COALESCE(e.cost, 0) AS expenses_paise,       (o.subtotal_paise - o.discount_paise)         - COALESCE(m.cost, 0) - COALESCE(l.cost, 0) - COALESCE(e.cost, 0)         AS install_profit_paiseFROM orders oLEFT JOIN LATERAL (  SELECT SUM(CASE sm.type WHEN 'DISPATCH' THEN 1 ELSE -1 END             * sm.qty * sm.unit_cost_paise) AS cost  FROM stock_movements sm  JOIN dispatches d ON sm.ref_type = 'dispatch' AND sm.ref_id = d.id  WHERE d.order_id = o.id AND sm.type IN ('DISPATCH', 'RETURN')) m ON trueLEFT JOIN LATERAL (  SELECT SUM(EXTRACT(EPOCH FROM (t.ended_at - t.started_at)) / 3600             * t.hourly_cost_paise) AS cost  FROM time_logs t JOIN installations i ON t.installation_id = i.id  WHERE i.order_id = o.id) l ON trueLEFT JOIN LATERAL (  SELECT SUM(x.amount_paise) AS cost FROM expenses x WHERE x.order_id = o.id) e ON true;
+[1842] 5.6 API contracts
+[1843] REST over JSON under /api/v1, session cookie auth (public and portal routes use tokens), Zod-validated bodies, errors as in TRD 2.7. Mutations from the field app and the portal accept an idempotencyKey. Contracts live in one shared package owned by Member 1 (D17).
+[1844] Method and path
+[1845] Who
+[1846] Purpose
+[1847] POST /public/enquiries
+[1848] Anyone
+[1849] Create or match customer by phone; create lead; raise address-duplicate flag
+[1850] GET /public/quotes/{token}
+[1851] Customer
+[1852] View quote
+[1853] POST /public/quotes/{token}/accept, /reject
+[1854] Customer
+[1855] Accept with typed name; reject with reason (verification required)
+[1856] GET /public/certificates/{token}
+[1857] Customer
+----------------------------------------
+[2129] Phases run in sequence while the four lanes work in parallel inside each; the hour-16 and hour-22 gates are where the cut list in 6.6 is applied if the build is behind.
+[2130] 6.2 Team and working rules
+[2131] Four members (engineers or coding agents), each owning a whole product area, with QA and DevOps shared [v1.1]. Within each phase the lanes work in parallel against the agreed API contract (Backend Schema 5.6).
+[2132] Member
+[2133] Area
+[2134] Owns
+[2135] 1
+[2136] Backend architecture
+[2137] Database and migrations, authentication, shared API contracts, core business engines (BOM, reservation, warranty, state machines), audit and outbox, CI
+[2138] 2
+[2139] Business frontend
+[2140] CRM, quotations and PDF, orders, schedule, director dashboard, finance and accounts
+[2141] 3
+[2142] Operations frontend
+[2143] Inventory and purchasing, QR labels, dispatch, technician PWA (survey, installation, sign-off)
+[2144] 4
+[2145] Customer experience and integration
+----------------------------------------
+[2145] Customer experience and integration
+[2146] Customer portal and link security, site assessment (calculator, AI summary, photo analysis), service workflow (tickets, service desk, warranty verdicts in the UI), customer notifications, integration and end-to-end testing
+[2147] Member 4 owns a complete product area, not leftover tasks.
+[2148] Phase
+[2149] Member 1
+[2150] Member 2
+[2151] Member 3
+[2152] Member 4
+[2153] 0
+[2154] Schema, auth, CI, seed, module lint rule
+[2155] Staff shell, design tokens
+[2156] PWA shell, scanner spike
+[2157] Access-link service, portal shell, AI client
+[2158] 1
+[2159] Leads service, duplicate detection
+[2160] Lead board and detail
+[2161] Offline queue base
+----------------------------------------
+[2147] Member 4 owns a complete product area, not leftover tasks.
+[2148] Phase
+[2149] Member 1
+[2150] Member 2
+[2151] Member 3
+[2152] Member 4
+[2153] 0
+[2154] Schema, auth, CI, seed, module lint rule
+[2155] Staff shell, design tokens
+[2156] PWA shell, scanner spike
+[2157] Access-link service, portal shell, AI client
+[2158] 1
+[2159] Leads service, duplicate detection
+[2160] Lead board and detail
+[2161] Offline queue base
+[2162] Public form, portal status tracker
+[2163] 2
+----------------------------------------
+[2148] Phase
+[2149] Member 1
+[2150] Member 2
+[2151] Member 3
+[2152] Member 4
+[2153] 0
+[2154] Schema, auth, CI, seed, module lint rule
+[2155] Staff shell, design tokens
+[2156] PWA shell, scanner spike
+[2157] Access-link service, portal shell, AI client
+[2158] 1
+[2159] Leads service, duplicate detection
+[2160] Lead board and detail
+[2161] Offline queue base
+[2162] Public form, portal status tracker
+[2163] 2
+[2164] Survey service, review API
+----------------------------------------
+[2149] Member 1
+[2150] Member 2
+[2151] Member 3
+[2152] Member 4
+[2153] 0
+[2154] Schema, auth, CI, seed, module lint rule
+[2155] Staff shell, design tokens
+[2156] PWA shell, scanner spike
+[2157] Access-link service, portal shell, AI client
+[2158] 1
+[2159] Leads service, duplicate detection
+[2160] Lead board and detail
+[2161] Offline queue base
+[2162] Public form, portal status tracker
+[2163] 2
+[2164] Survey service, review API
+[2165] Lead detail integration
+----------------------------------------
+[2150] Member 2
+[2151] Member 3
+[2152] Member 4
+[2153] 0
+[2154] Schema, auth, CI, seed, module lint rule
+[2155] Staff shell, design tokens
+[2156] PWA shell, scanner spike
+[2157] Access-link service, portal shell, AI client
+[2158] 1
+[2159] Leads service, duplicate detection
+[2160] Lead board and detail
+[2161] Offline queue base
+[2162] Public form, portal status tracker
+[2163] 2
+[2164] Survey service, review API
+[2165] Lead detail integration
+[2166] Survey form
+----------------------------------------
+[2203] Working rules:
+[2204] Trunk-based development; small pull requests; CI must be green to merge.
+[2205] Member 1 reviews every change to prisma/ and the contract package (D17).
+[2206] A phase is done only when its acceptance criteria pass on staging, not when the code is written.
+[2207] Domain engines land with their unit tests in the same pull request.
+[2208] If a phase overruns by more than an hour, cut from the list in 6.6 rather than borrowing from Phase 9.
+[2209] 6.3 Phases
+[2210] Phase 0: Foundations (hours 0 to 2)
+[2211] Objective: a deployable skeleton with auth, roles, the full schema and seed data. Depends on: nothing.
+[2212] Files: package.json, prisma/schema.prisma, prisma/migrations/0001_init, 0002_constraints.sql, prisma/seed.ts, src/lib/{db,auth,rbac,money,dates,errors,logger,access-links,idempotency}.ts, app/(staff)/layout.tsx, .github/workflows/ci.yml, docker-compose.yml, .env.example.
+[2213] Scaffold Next.js (TypeScript strict), Tailwind, shadcn/ui, ESLint (with the module-boundary rule), Prettier, Vitest, Playwright.
+[2214] Write the Prisma schema for all 53 tables; add the SQL migration with CHECKs, partial indexes, triggers, views and the ledger and warranty REVOKEs.
+[2215] Auth.js credentials with Argon2id and database sessions; requireRole guard and the can() matrix from TRD 2.6.
+[2216] Money (paise, lakh formatting) and dates (IST calendar, add months) helpers with tests.
+[2217] Route wrapper handler(schema, permission, fn) that validates, authorizes, maps domain errors and logs; idempotency helper.
+[2218] Access-link service: issue, hash, verify, revoke, lock.
+[2219] Idempotent seed script (Backend Schema 5.8).
+----------------------------------------
