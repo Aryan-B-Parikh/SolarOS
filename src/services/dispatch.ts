@@ -8,6 +8,7 @@
 import { prisma } from '@/lib/db';
 import { AppError } from '@/lib/errors';
 import { recordAudit } from '@/lib/audit';
+import { checkIdempotency, recordIdempotency } from '@/lib/idempotency';
 import { calculateWarrantyPeriod } from '@/domain/warranty';
 import {
   DispatchStatus,
@@ -32,6 +33,16 @@ export interface DepartDispatchInput {
   dispatchId: string;
   actorId?: string;
   departedAt?: string | Date;
+  /** Optional idempotency key (x-idempotency-key header or body field) so a
+   *  retried departure request never double-decrements stock (X-QUAL-IDEM). */
+  idempotencyKey?: string;
+}
+
+export interface LoadNonSerializedInput {
+  dispatchId: string;
+  lineId: string;
+  qty: number;
+  actorId?: string;
 }
 
 export interface DeliverDispatchInput {
@@ -92,6 +103,7 @@ export async function getDispatch(id: string) {
     departedAt: dispatch.departed_at ? dispatch.departed_at.toISOString() : null,
     deliveredAt: dispatch.delivered_at ? dispatch.delivered_at.toISOString() : null,
     isFullyLoaded,
+    customerCity: dispatch.order.customer.city,
     lines: dispatch.lines.map((l) => ({
       id: l.id,
       productId: l.product_id,
@@ -367,11 +379,136 @@ export async function unscanDispatchUnit(data: {
 }
 
 /**
+ * Loads a bulk (non-serialized) quantity onto a dispatch line (FR-5.5).
+ *
+ * Full-system orders always contain non-serialized lines (cable, structure,
+ * ACDB/DCDB) which cannot be satisfied by serial scans. Without this loading
+ * path the dispatch_guard trigger blocks departure forever (critical deadlock).
+ *
+ * Ledger pattern mirrors the serial scan path exactly: a scan only increments
+ * qty_loaded (units additionally flip to PICKED status); the append-only
+ * DISPATCH stock movement is written once at departure for the full line
+ * quantity. Writing a movement at load time would double-count against the
+ * departure movement, so none is recorded here.
+ */
+export async function loadNonSerializedLine(input: LoadNonSerializedInput) {
+  if (!input.lineId) {
+    throw new AppError('VALIDATION_FAILED', 'Dispatch line id is required', 400);
+  }
+  if (!Number.isFinite(input.qty) || input.qty <= 0) {
+    throw new AppError('VALIDATION_FAILED', 'Load quantity must be greater than zero', 400);
+  }
+
+  let actorId = input.actorId;
+  if (!actorId) {
+    const defaultUser = await prisma.user.findFirst();
+    if (defaultUser) actorId = defaultUser.id;
+  }
+  if (!actorId) {
+    throw new AppError('UNAUTHENTICATED', 'User not authenticated', 401);
+  }
+
+  return prisma.$transaction(async (tx) => {
+    const dispatch = await tx.dispatch.findUnique({
+      where: { id: input.dispatchId },
+    });
+    if (!dispatch) {
+      throw new AppError('NOT_FOUND', 'Dispatch record not found', 404);
+    }
+    if (dispatch.status !== DispatchStatus.PICKING && dispatch.status !== DispatchStatus.READY) {
+      throw new AppError(
+        'INVALID_STATE',
+        `Cannot load items onto dispatch in ${dispatch.status} status`,
+        400
+      );
+    }
+
+    const line = await tx.dispatchLine.findUnique({
+      where: { id: input.lineId },
+      include: { product: true },
+    });
+    if (!line || line.dispatch_id !== dispatch.id) {
+      throw new AppError('NOT_FOUND', 'Line does not belong to this dispatch', 404);
+    }
+
+    if (line.product.is_serialized) {
+      throw new AppError(
+        'VALIDATION_FAILED',
+        `${line.product.name} is serialized: units must be scanned individually`,
+        400
+      );
+    }
+
+    const qtyRequired = Number(line.qty_required);
+    const qtyLoaded = Number(line.qty_loaded);
+    if (qtyLoaded + input.qty > qtyRequired) {
+      throw new AppError(
+        'LINE_ALREADY_FULFILLED',
+        `Cannot load ${input.qty} ${line.product.uom} of ${line.product.name}: only ${qtyRequired - qtyLoaded} more required (${qtyLoaded}/${qtyRequired} already loaded)`,
+        400
+      );
+    }
+
+    const updatedLine = await tx.dispatchLine.update({
+      where: { id: line.id },
+      data: {
+        qty_loaded: { increment: input.qty },
+      },
+    });
+
+    // Mirror the serial-scan completion behaviour: flip to READY when every
+    // line is fully loaded.
+    const allLines = await tx.dispatchLine.findMany({
+      where: { dispatch_id: dispatch.id },
+    });
+    const allFulfilled = allLines.every((l) => Number(l.qty_loaded) >= Number(l.qty_required));
+    if (allFulfilled && dispatch.status === DispatchStatus.PICKING) {
+      await tx.dispatch.update({
+        where: { id: dispatch.id },
+        data: { status: DispatchStatus.READY },
+      });
+    }
+
+    await recordAudit(
+      {
+        actorType: 'USER',
+        actorId: actorId!,
+        entityType: 'DISPATCH',
+        entityId: dispatch.id,
+        action: 'NON_SERIALIZED_LOADED',
+        before: { lineId: line.id, qtyLoaded },
+        after: {
+          lineId: line.id,
+          productId: line.product_id,
+          qtyLoaded: Number(updatedLine.qty_loaded),
+          qtyRequired,
+          qtyAdded: input.qty,
+        },
+      },
+      tx
+    );
+
+    return {
+      lineId: line.id,
+      productId: line.product_id,
+      productName: line.product.name,
+      qtyLoaded: Number(updatedLine.qty_loaded),
+      qtyRequired,
+      isDispatchReady: allFulfilled,
+    };
+  });
+}
+
+/**
  * Gate check & departure:
  * - Refuses departure if any line is incomplete (DISPATCH_INCOMPLETE)
  * - Transitions status to IN_TRANSIT
  * - Consumes reserved quantities and records DISPATCH stock movements
  * - Marks units DISPATCHED
+ * - Reservation / on-hand decrements are clamped at zero (FR-4.5 / C5 / AUTO-2)
+ *   so shortage lines can never drive stock_levels negative.
+ * - Honours an optional idempotency key scoped to this dispatch so a retried
+ *   request does not double-decrement stock (X-QUAL-IDEM).
  */
 export async function departDispatch(input: DepartDispatchInput) {
   let actorId = input.actorId;
@@ -384,8 +521,27 @@ export async function departDispatch(input: DepartDispatchInput) {
   }
 
   const departedAt = input.departedAt ? new Date(input.departedAt) : new Date();
+  const idempotencyScope = `dispatch:depart:${input.dispatchId}`;
 
   return prisma.$transaction(async (tx) => {
+    // Idempotency replay: return the current (already departed) state instead
+    // of re-running the stock decrement.
+    if (input.idempotencyKey) {
+      const existing = await checkIdempotency(idempotencyScope, input.idempotencyKey, tx);
+      if (existing) {
+        const current = await tx.dispatch.findUnique({
+          where: { id: input.dispatchId },
+        });
+        return {
+          dispatchId: input.dispatchId,
+          dispatchNumber: current?.dispatch_number,
+          status: current?.status,
+          departedAt: current?.departed_at?.toISOString() ?? null,
+          duplicate: true,
+        };
+      }
+    }
+
     const dispatch = await tx.dispatch.findUnique({
       where: { id: input.dispatchId },
       include: {
@@ -393,6 +549,7 @@ export async function departDispatch(input: DepartDispatchInput) {
         lines: {
           include: {
             product: true,
+            order_line: true,
             units: {
               where: { removed_at: null },
               include: { unit: true },
@@ -421,7 +578,8 @@ export async function departDispatch(input: DepartDispatchInput) {
       }
     }
 
-    // 1. Consume reservations & update stock_levels (on_hand -= qty, reserved -= qty)
+    // 1. Consume reservations & update stock_levels (on_hand -= qty, reserved -= qty),
+    //    clamped at zero so shortage lines never produce negative balances.
     for (const line of dispatch.lines) {
       const lineQty = Number(line.qty_required);
 
@@ -437,6 +595,8 @@ export async function departDispatch(input: DepartDispatchInput) {
       const avgCostPaise = stockLevel?.avg_cost_paise || 0n;
 
       if (stockLevel) {
+        const currentOnHand = Number(stockLevel.on_hand);
+        const currentReserved = Number(stockLevel.reserved);
         await tx.stockLevel.update({
           where: {
             product_id_location_id: {
@@ -445,8 +605,8 @@ export async function departDispatch(input: DepartDispatchInput) {
             },
           },
           data: {
-            on_hand: { decrement: lineQty },
-            reserved: { decrement: lineQty },
+            on_hand: Math.max(0, currentOnHand - lineQty),
+            reserved: Math.max(0, currentReserved - lineQty),
           },
         });
       }
@@ -467,12 +627,14 @@ export async function departDispatch(input: DepartDispatchInput) {
         },
       });
 
-      // Update OrderLine dispatched quantity
+      // Update OrderLine dispatched quantity; reserved decrement clamped at
+      // zero (shortage lines may have reserved less than required).
+      const lineReserved = Number(line.order_line?.qty_reserved ?? 0);
       await tx.orderLine.update({
         where: { id: line.order_line_id },
         data: {
           qty_dispatched: { increment: lineQty },
-          qty_reserved: { decrement: lineQty },
+          qty_reserved: Math.max(0, lineReserved - lineQty),
         },
       });
 
@@ -522,12 +684,19 @@ export async function departDispatch(input: DepartDispatchInput) {
       tx
     );
 
-    return {
+    const result = {
       dispatchId: updatedDispatch.id,
       dispatchNumber: updatedDispatch.dispatch_number,
       status: updatedDispatch.status,
       departedAt: updatedDispatch.departed_at?.toISOString(),
+      duplicate: false,
     };
+
+    if (input.idempotencyKey) {
+      await recordIdempotency(idempotencyScope, input.idempotencyKey, result, tx);
+    }
+
+    return result;
   });
 }
 

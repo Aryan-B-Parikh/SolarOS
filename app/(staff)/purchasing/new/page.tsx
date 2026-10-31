@@ -8,18 +8,30 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 
-interface Supplier { id: string; name: string; }
-interface Product { id: string; name: string; sku: string; stdCostPaise: number; }
+interface Supplier {
+  id: string;
+  name: string;
+}
+interface Product {
+  id: string;
+  name: string;
+  sku: string;
+  category: string;
+  uom: string;
+  is_serialized: boolean;
+  std_cost_paise: number;
+}
 
 export default function NewPurchaseOrderPage() {
   const router = useRouter();
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
+  const [products, setProducts] = useState<Product[]>([]);
   const [supplierId, setSupplierId] = useState('');
   const [orderedOn, setOrderedOn] = useState(new Date().toISOString().split('T')[0]);
   const [expectedOn, setExpectedOn] = useState('');
-  const [lines, setLines] = useState<Array<{ productId: string; productName: string; qtyOrdered: number; unitCostRupees: number }>>([
-    { productId: '', productName: '', qtyOrdered: 1, unitCostRupees: 0 }
-  ]);
+  const [lines, setLines] = useState<
+    Array<{ productId: string; qtyOrdered: number; unitCostRupees: number }>
+  >([{ productId: '', qtyOrdered: 1, unitCostRupees: 0 }]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
@@ -33,6 +45,14 @@ export default function NewPurchaseOrderPage() {
         }
       })
       .catch(() => {});
+
+    // Real product catalogue (FR-5.8): lines must reference actual products
+    fetch('/api/v1/products')
+      .then((r) => r.json())
+      .then((data) => {
+        if (Array.isArray(data)) setProducts(data);
+      })
+      .catch(() => {});
   }, []);
 
   function updateLine(index: number, field: string, val: any) {
@@ -43,8 +63,22 @@ export default function NewPurchaseOrderPage() {
     });
   }
 
+  /** Selecting a real product prefills the unit cost from the catalogue std cost. */
+  function selectProduct(index: number, productId: string) {
+    const product = products.find((p) => p.id === productId);
+    setLines((prev) => {
+      const copy = [...prev];
+      copy[index] = {
+        ...copy[index],
+        productId,
+        unitCostRupees: product ? product.std_cost_paise / 100 : copy[index].unitCostRupees,
+      };
+      return copy;
+    });
+  }
+
   function addLine() {
-    setLines((prev) => [...prev, { productId: '', productName: '', qtyOrdered: 1, unitCostRupees: 0 }]);
+    setLines((prev) => [...prev, { productId: '', qtyOrdered: 1, unitCostRupees: 0 }]);
   }
 
   function removeLine(index: number) {
@@ -63,6 +97,11 @@ export default function NewPurchaseOrderPage() {
       return;
     }
 
+    if (lines.some((l) => !l.productId)) {
+      setError('Every line item must select a real catalogue product (add missing products under Inventory → Product Catalogue first)');
+      return;
+    }
+
     setSaving(true);
     try {
       const payload = {
@@ -70,7 +109,7 @@ export default function NewPurchaseOrderPage() {
         orderedOn,
         expectedOn: expectedOn || undefined,
         lines: lines.map((l) => ({
-          productId: l.productId || crypto.randomUUID(), // fallback if custom sku
+          productId: l.productId,
           qtyOrdered: Number(l.qtyOrdered),
           unitCostPaise: Math.round(Number(l.unitCostRupees) * 100),
         })),
@@ -84,7 +123,7 @@ export default function NewPurchaseOrderPage() {
 
       if (!res.ok) {
         const d = await res.json().catch(() => ({}));
-        throw new Error(d.message || 'Failed to create PO');
+        throw new Error(d.error?.message || d.message || 'Failed to create PO');
       }
 
       const po = await res.json();
@@ -96,8 +135,17 @@ export default function NewPurchaseOrderPage() {
     }
   }
 
+  const inputStyle = {
+    minHeight: '44px',
+    padding: '10px 14px',
+    borderRadius: '10px',
+    border: '1px solid #cbd5e1',
+    fontSize: '15px',
+    backgroundColor: '#fff',
+  } as React.CSSProperties;
+
   return (
-    <div style={{ padding: '24px', maxWidth: '800px', margin: '0 auto' }}>
+    <div style={{ padding: '24px', maxWidth: '860px', margin: '0 auto' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '24px' }}>
         <button onClick={() => router.back()} type="button"
           style={{ minWidth: '44px', minHeight: '44px', borderRadius: '10px', border: '1px solid #e2e8f0', backgroundColor: '#fff', fontSize: '18px', cursor: 'pointer' }}>
@@ -115,7 +163,8 @@ export default function NewPurchaseOrderPage() {
           <div>
             <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, color: '#475569', marginBottom: '6px' }}>Supplier *</label>
             <select value={supplierId} onChange={(e) => setSupplierId(e.target.value)}
-              style={{ width: '100%', minHeight: '44px', padding: '10px 14px', borderRadius: '10px', border: '1px solid #cbd5e1', fontSize: '15px', backgroundColor: '#fff' }}>
+              style={{ ...inputStyle, width: '100%' }}>
+              {suppliers.length === 0 && <option value="">No suppliers yet — add one first</option>}
               {suppliers.map((s) => (
                 <option key={s.id} value={s.id}>{s.name}</option>
               ))}
@@ -125,13 +174,11 @@ export default function NewPurchaseOrderPage() {
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
             <div>
               <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, color: '#475569', marginBottom: '6px' }}>Order Date</label>
-              <input type="date" value={orderedOn} onChange={(e) => setOrderedOn(e.target.value)}
-                style={{ width: '100%', minHeight: '44px', padding: '10px 14px', borderRadius: '10px', border: '1px solid #cbd5e1', fontSize: '15px' }} />
+              <input type="date" value={orderedOn} onChange={(e) => setOrderedOn(e.target.value)} style={{ ...inputStyle, width: '100%' }} />
             </div>
             <div>
               <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, color: '#475569', marginBottom: '6px' }}>Expected Delivery</label>
-              <input type="date" value={expectedOn} onChange={(e) => setExpectedOn(e.target.value)}
-                style={{ width: '100%', minHeight: '44px', padding: '10px 14px', borderRadius: '10px', border: '1px solid #cbd5e1', fontSize: '15px' }} />
+              <input type="date" value={expectedOn} onChange={(e) => setExpectedOn(e.target.value)} style={{ ...inputStyle, width: '100%' }} />
             </div>
           </div>
         </div>
@@ -147,21 +194,54 @@ export default function NewPurchaseOrderPage() {
           </div>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-            {lines.map((line, idx) => (
-              <div key={idx} style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr auto', gap: '8px', alignItems: 'center' }}>
-                <input placeholder="Product or SKU name" value={line.productName} onChange={(e) => updateLine(idx, 'productName', e.target.value)}
-                  style={{ minHeight: '44px', padding: '8px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '14px' }} />
-                <input type="number" placeholder="Qty" value={line.qtyOrdered} min={1} onChange={(e) => updateLine(idx, 'qtyOrdered', Number(e.target.value))}
-                  style={{ minHeight: '44px', padding: '8px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '14px' }} />
-                <input type="number" placeholder="Cost (Rs)" value={line.unitCostRupees} min={0} onChange={(e) => updateLine(idx, 'unitCostRupees', Number(e.target.value))}
-                  style={{ minHeight: '44px', padding: '8px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '14px' }} />
-                <button type="button" onClick={() => removeLine(idx)} disabled={lines.length <= 1}
-                  style={{ width: '36px', height: '36px', borderRadius: '8px', border: '1px solid #e2e8f0', backgroundColor: '#fff', color: '#ef4444', cursor: lines.length > 1 ? 'pointer' : 'default' }}>
-                  ✕
-                </button>
-              </div>
-            ))}
+            {lines.map((line, idx) => {
+              const selectedProduct = products.find((p) => p.id === line.productId);
+              return (
+                <div key={idx} style={{ display: 'grid', gridTemplateColumns: '2.2fr 0.8fr 1fr auto', gap: '8px', alignItems: 'center' }}>
+                  <select
+                    value={line.productId}
+                    onChange={(e) => selectProduct(idx, e.target.value)}
+                    style={inputStyle}
+                  >
+                    <option value="">-- Select product --</option>
+                    {products.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.sku} — {p.name} ({p.category})
+                      </option>
+                    ))}
+                  </select>
+                  <input
+                    type="number"
+                    placeholder={`Qty${selectedProduct ? ` (${selectedProduct.uom})` : ''}`}
+                    value={line.qtyOrdered}
+                    min={1}
+                    onChange={(e) => updateLine(idx, 'qtyOrdered', Number(e.target.value))}
+                    style={inputStyle}
+                  />
+                  <input
+                    type="number"
+                    placeholder="Cost (Rs)"
+                    value={line.unitCostRupees}
+                    min={0}
+                    step="0.01"
+                    onChange={(e) => updateLine(idx, 'unitCostRupees', Number(e.target.value))}
+                    style={inputStyle}
+                  />
+                  <button type="button" onClick={() => removeLine(idx)} disabled={lines.length <= 1}
+                    title={lines.length <= 1 ? 'At least one line is required' : 'Remove line'}
+                    style={{ width: '36px', height: '36px', borderRadius: '8px', border: '1px solid #e2e8f0', backgroundColor: '#fff', color: '#ef4444', cursor: lines.length > 1 ? 'pointer' : 'default', opacity: lines.length > 1 ? 1 : 0.4 }}>
+                    ✕
+                  </button>
+                </div>
+              );
+            })}
           </div>
+
+          {products.length === 0 && (
+            <p style={{ fontSize: '13px', color: '#dc2626', margin: '12px 0 0' }}>
+              No products in the catalogue yet. Create products under Inventory → Product Catalogue before raising a PO.
+            </p>
+          )}
 
           <div style={{ marginTop: '20px', paddingTop: '16px', borderTop: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <span style={{ fontSize: '15px', fontWeight: 600, color: '#475569' }}>Total Estimated Amount:</span>

@@ -325,3 +325,81 @@ export function onOffline(callback: () => void): () => void {
 export function isOnline(): boolean {
   return typeof navigator !== 'undefined' ? navigator.onLine : true;
 }
+
+// ─── High-level flush API (used by tech profile page & FieldShell) ──────────
+
+/**
+ * Number of items still waiting in the offline queue
+ * (pending uploads + queued API calls + failed uploads).
+ */
+export async function getOfflineQueueCount(): Promise<number> {
+  try {
+    const [uploads, calls] = await Promise.all([getPendingUploads(), getQueuedApiCalls()]);
+    return uploads.length + calls.length;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * Uploads one pending file to the private attachment storage endpoint.
+ * Returns true when the server accepted the file.
+ */
+async function uploadPendingFile(upload: PendingUpload): Promise<boolean> {
+  const form = new FormData();
+  form.append('file', upload.file, upload.fileName);
+  form.append('entityType', upload.entityType);
+  form.append('entityId', upload.entityId);
+  // Preserve the attachment kind (ARRAY/INVERTER/EARTHING/SURVEY/SIGNATURE/...)
+  // captured at queue time so server-side categorisation is not lost.
+  if (upload.metadata?.kind && typeof upload.metadata.kind === 'string') {
+    form.append('kind', upload.metadata.kind);
+  }
+  if (upload.metadata) {
+    form.append('metadata', JSON.stringify(upload.metadata));
+  }
+  const res = await fetch('/api/v1/uploads', { method: 'POST', body: form });
+  return res.ok;
+}
+
+/** Replays one queued API call. Returns true on HTTP success (2xx). */
+async function replayApiCall(call: QueuedApiCall): Promise<boolean> {
+  const headers: Record<string, string> = { ...call.headers };
+  if (call.idempotencyKey) {
+    headers['x-idempotency-key'] = call.idempotencyKey;
+  }
+  const res = await fetch(call.url, {
+    method: call.method,
+    headers,
+    body: call.body || undefined,
+  });
+  return res.ok;
+}
+
+/**
+ * Replays everything that is possible right now: pending file uploads
+ * first (photos/signatures must exist before submissions that reference
+ * them), then queued API mutations. Safe to call repeatedly - each item
+ * is only removed from the queue after a 2xx response.
+ */
+export async function flushOfflineQueue(): Promise<{
+  synced: number;
+  remaining: number;
+  uploads: number;
+  apiCalls: number;
+}> {
+  if (!isOnline()) {
+    const remaining = await getOfflineQueueCount();
+    return { synced: 0, remaining, uploads: 0, apiCalls: 0 };
+  }
+  try {
+    const result = await replayQueue(uploadPendingFile, replayApiCall);
+    const synced = result.uploads + result.apiCalls;
+    const remaining = await getOfflineQueueCount();
+    return { synced, remaining, uploads: result.uploads, apiCalls: result.apiCalls };
+  } catch (err: any) {
+    const remaining = await getOfflineQueueCount().catch(() => 0);
+    if (remaining === 0) return { synced: 0, remaining: 0, uploads: 0, apiCalls: 0 };
+    throw err;
+  }
+}

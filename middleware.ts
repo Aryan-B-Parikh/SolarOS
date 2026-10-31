@@ -23,6 +23,7 @@ export const config = {
     '/purchasing/:path*',
     '/accounts/:path*',
     '/tech/:path*',
+    '/admin/:path*',
   ],
 };
 
@@ -30,7 +31,9 @@ export function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
 
   // 1. Extract session token from cookie
-  const sessionCookie = req.cookies.get(SESSION_COOKIE_NAME)?.value;
+  const sessionCookie =
+    req.cookies.get(SESSION_COOKIE_NAME)?.value ||
+    req.cookies.get('solaros_session')?.value;
 
   if (!sessionCookie) {
     // Unauthenticated: redirect to /login with redirect parameter

@@ -8,6 +8,7 @@
 import { prisma } from '../lib/db.ts';
 import { AppError } from '../lib/errors.ts';
 import { recordAudit } from '../lib/audit.ts';
+import { queueNotification } from '../lib/outbox.ts';
 import {
   evaluateInstallationMaintenanceRules,
   calculateAggregateRiskScore,
@@ -184,25 +185,24 @@ export async function runMaintenanceJob(referenceDate: Date = new Date()): Promi
       });
       newAlertsCreated++;
 
-      // If customer warranty reminder, enqueue Outbox message
+      // If customer warranty reminder, enqueue Outbox message (FR-7.10 / AUTO-12)
       if (candidate.rule === 'WARRANTY_REMINDER_CUSTOMER') {
         const matchingUnit = unitDataList.find((u) => u.id === candidate.unitId);
         const endDateStr = matchingUnit?.activeWarranty?.endDate || candidate.dueOn;
 
-        await prisma.outbox.create({
-          data: {
-            event_type: 'WARRANTY_EXPIRY_REMINDER',
-            channel: 'SMS',
-            recipient: inst.order.customer.phone,
-            payload: {
-              customerId: inst.order.customer.id,
-              customerName: inst.order.customer.name,
-              serialNumber: matchingUnit?.serialNumber || 'Solar Equipment',
-              endDate: endDateStr,
-              message: `Dear ${inst.order.customer.name}, your solar equipment warranty expires on ${endDateStr}. Contact SunPower Ops to schedule an annual maintenance check.`,
-            },
-            status: 'PENDING',
+        await queueNotification({
+          channel: 'SMS',
+          recipient: inst.order.customer.phone,
+          template: 'WARRANTY_EXPIRY_REMINDER',
+          payload: {
+            customerId: inst.order.customer.id,
+            customerName: inst.order.customer.name,
+            serialNumber: matchingUnit?.serialNumber || 'Solar Equipment',
+            endDate: endDateStr,
+            message: `Dear ${inst.order.customer.name}, your solar equipment warranty expires on ${endDateStr}. Contact SunPower Ops to schedule an annual maintenance check.`,
           },
+          // Idempotent per installation + due date: cron re-runs never double-send
+          idempotencyKey: `warranty-reminder:${candidate.installationId}:${candidate.dueOn}`,
         });
         customerRemindersQueued++;
       }
@@ -291,7 +291,7 @@ export async function convertAlertToTicket(
       customerId,
       installationId: alert.installation_id,
       unitId,
-      channel: 'INTERNAL',
+      channel: 'MAINTENANCE_ALERT',
       category: 'OTHER',
       description,
       priority,
@@ -309,11 +309,12 @@ export async function convertAlertToTicket(
   });
 
   await recordAudit({
-    entity_type: 'maintenance_alert',
-    entity_id: alert.id,
+    actorType: 'USER',
+    actorId,
+    entityType: 'maintenance_alert',
+    entityId: alert.id,
     action: 'CONVERT_TO_TICKET',
-    user_id: actorId,
-    details: { ticketId: ticket.id, ticketNumber: ticket.ticket_number },
+    after: { ticketId: ticket.id, ticketNumber: ticket.ticket_number },
   });
 
   return ticket;

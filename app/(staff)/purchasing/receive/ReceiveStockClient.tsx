@@ -19,6 +19,7 @@ import {
   X
 } from 'lucide-react';
 import Scanner, { ScanResult } from '@/components/Scanner';
+import { generateLabels, QRLabel } from '@/lib/qr';
 
 interface ProductOption {
   id: string;
@@ -27,6 +28,7 @@ interface ProductOption {
   category: string;
   is_serialized: boolean;
   uom: string;
+  warranty_months: number;
 }
 
 interface LocationOption {
@@ -86,6 +88,7 @@ export default function ReceiveStockClient({
   const [successReceipt, setSuccessReceipt] = useState<{
     receiptNumber: string;
     unitsCount: number;
+    labels: QRLabel[];
   } | null>(null);
 
   // Initialize lines when PO is selected
@@ -303,9 +306,31 @@ export default function ReceiveStockClient({
         throw new Error(data.error?.message || data.message || 'Stock receipt failed');
       }
 
+      // Build REAL scannable QR labels (FR-5.2) for every serialized unit
+      const createdUnits: Array<{
+        id: string;
+        productId: string;
+        productName: string;
+        serialNumber: string;
+        qrCode: string;
+      }> = data.units || [];
+      const labels = await generateLabels(
+        createdUnits.map((u) => {
+          const product = products.find((p) => p.id === u.productId);
+          return {
+            serialNumber: u.serialNumber,
+            qrCode: u.qrCode,
+            productName: u.productName || product?.name || '',
+            sku: product?.sku || '',
+            warrantyMonths: product?.warranty_months ?? 0,
+          };
+        })
+      ).catch(() => []);
+
       setSuccessReceipt({
         receiptNumber: data.receiptNumber || 'RCV-SUCCESS',
-        unitsCount: data.units?.length || 0,
+        unitsCount: createdUnits.length,
+        labels,
       });
     } catch (err: any) {
       setErrorMessage(err.message || 'Failed to submit stock receipt');
@@ -316,36 +341,111 @@ export default function ReceiveStockClient({
 
   if (successReceipt) {
     return (
-      <div className="max-w-2xl mx-auto py-12 px-4 text-center">
-        <div className="bg-white rounded-2xl p-8 border border-slate-200 shadow-sm space-y-4">
-          <div className="w-16 h-16 bg-emerald-100 rounded-full flex items-center justify-center mx-auto text-emerald-600">
-            <CheckCircle2 className="w-10 h-10" />
-          </div>
-          <h1 className="text-2xl font-bold text-slate-900">Stock Received Successfully!</h1>
-          <p className="text-slate-600">
-            Receipt <span className="font-mono font-bold text-slate-900">{successReceipt.receiptNumber}</span> has been processed.
-            Stock quantities and moving average costs have been updated in the ledger.
-          </p>
-          {successReceipt.unitsCount > 0 && (
-            <div className="p-3 bg-blue-50 text-blue-800 rounded-xl text-sm font-medium">
-              {successReceipt.unitsCount} serialized unit(s) generated with unique QR codes.
+      <div className="max-w-5xl mx-auto py-12 px-4 space-y-8">
+        {/* Print CSS: hide everything except the QR label sheet (FR-5.2) */}
+        <style>{`
+          @media print {
+            body * { visibility: hidden; }
+            #qr-label-sheet, #qr-label-sheet * { visibility: visible; }
+            #qr-label-sheet {
+              position: absolute;
+              left: 0;
+              top: 0;
+              width: 100%;
+              padding: 10mm;
+              box-sizing: border-box;
+            }
+            #qr-label-sheet .label-card { page-break-inside: avoid; }
+          }
+        `}</style>
+
+        <div className="max-w-2xl mx-auto text-center space-y-4">
+          <div className="bg-white rounded-2xl p-8 border border-slate-200 shadow-sm space-y-4">
+            <div className="w-16 h-16 bg-emerald-100 rounded-full flex items-center justify-center mx-auto text-emerald-600">
+              <CheckCircle2 className="w-10 h-10" />
             </div>
-          )}
-          <div className="flex justify-center gap-3 pt-4">
-            <button
-              onClick={() => router.push('/inventory')}
-              className="px-5 py-2.5 bg-slate-900 text-white rounded-xl text-sm font-semibold hover:bg-slate-800"
-            >
-              View Inventory
-            </button>
-            <button
-              onClick={() => router.push('/purchasing')}
-              className="px-5 py-2.5 border border-slate-200 rounded-xl text-sm font-semibold hover:bg-slate-50"
-            >
-              Back to POs
-            </button>
+            <h1 className="text-2xl font-bold text-slate-900">Stock Received Successfully!</h1>
+            <p className="text-slate-600">
+              Receipt <span className="font-mono font-bold text-slate-900">{successReceipt.receiptNumber}</span> has been processed.
+              Stock quantities and moving average costs have been updated in the ledger.
+            </p>
+            {successReceipt.unitsCount > 0 && (
+              <div className="p-3 bg-blue-50 text-blue-800 rounded-xl text-sm font-medium">
+                {successReceipt.unitsCount} serialized unit(s) generated with unique QR codes.
+              </div>
+            )}
+            <div className="flex flex-wrap justify-center gap-3 pt-4">
+              {successReceipt.labels.length > 0 && (
+                <button
+                  onClick={() => window.print()}
+                  className="inline-flex items-center gap-2 px-5 py-2.5 bg-orange-600 text-white rounded-xl text-sm font-semibold hover:bg-orange-700 shadow-sm"
+                >
+                  <Barcode className="w-4 h-4" />
+                  <span>Print Labels ({successReceipt.labels.length})</span>
+                </button>
+              )}
+              <button
+                onClick={() => router.push('/inventory')}
+                className="px-5 py-2.5 bg-slate-900 text-white rounded-xl text-sm font-semibold hover:bg-slate-800"
+              >
+                View Inventory
+              </button>
+              <button
+                onClick={() => router.push('/purchasing')}
+                className="px-5 py-2.5 border border-slate-200 rounded-xl text-sm font-semibold hover:bg-slate-50"
+              >
+                Back to POs
+              </button>
+            </div>
           </div>
         </div>
+
+        {/* Printable QR label sheet: one card per serialized unit with a real
+            scannable QR code (PNG data URL) encoding the public warranty URL */}
+        {successReceipt.labels.length > 0 && (
+          <div id="qr-label-sheet">
+            <div className="grid grid-cols-[repeat(auto-fill,62mm)] gap-[5mm] justify-center">
+              {successReceipt.labels.map((label) => (
+                <div
+                  key={label.qrCode}
+                  className="label-card flex flex-col justify-between border border-dashed border-slate-400 bg-white p-[3mm]"
+                  style={{ width: '62mm', height: '42mm' }}
+                >
+                  <div className="flex justify-between items-start">
+                    <div>
+                      <div className="text-[8pt] font-bold uppercase text-orange-600 tracking-wide">
+                        SunPower Solar
+                      </div>
+                      <div className="text-[7pt] text-slate-600 max-w-[34mm] truncate">{label.productName}</div>
+                    </div>
+                    <div className="text-[6pt] font-mono text-slate-500">{label.sku}</div>
+                  </div>
+
+                  <div className="flex items-center justify-between">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={label.dataUrl}
+                      alt={`QR ${label.qrCode}`}
+                      style={{ width: '19mm', height: '19mm', display: 'block' }}
+                    />
+                    <div className="flex-1 pl-[3mm] text-[6.5pt] text-slate-700">
+                      <div className="font-semibold">Serial:</div>
+                      <div className="font-mono text-[7.5pt] font-bold text-slate-900">{label.serialNumber}</div>
+                      <div className="mt-[1mm] text-[5.5pt] text-slate-400">
+                        Warranty: {label.warrantyMonths} months
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex justify-between text-[5.5pt] text-slate-400 border-t border-slate-200 pt-[1mm]">
+                    <span>Scan for warranty &amp; unit history</span>
+                    <span>{label.receiptDate}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
     );
   }

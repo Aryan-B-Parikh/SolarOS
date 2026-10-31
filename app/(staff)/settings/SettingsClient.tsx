@@ -1,10 +1,21 @@
 'use client';
 
-import React, { useState } from 'react';
-import { 
-  Building, Percent, Package, Users, Save, Check 
+import React, { useEffect, useState } from 'react';
+import {
+  Building, Percent, Package, Users, Save, Check,
+  AlertTriangle, Loader2, Sparkles
 } from 'lucide-react';
 import clsx from 'clsx';
+
+/**
+ * System Settings (Screen S21, FR-9.2).
+ *
+ * Loads real values from GET /api/v1/settings and persists changes via
+ * PUT /api/v1/settings (DIRECTOR only). Every change is audited server-side
+ * (entityType 'setting'). Keys follow prisma/seed.ts naming where seeded:
+ * target_margin_bp, sla_hours_by_priority, advance_threshold_percent; the
+ * flat company_* keys feed the branded PDF exports.
+ */
 
 interface SettingsClientProps {
   initialSettings: any[];
@@ -13,43 +24,196 @@ interface SettingsClientProps {
   users: any[];
 }
 
+interface SettingsForm {
+  company_name: string;
+  company_address: string;
+  company_gstin: string;
+  company_bank_details: string;
+  company_phone: string;
+  company_email: string;
+  target_margin_bp: number;
+  advance_threshold_percent: number;
+  slaLow: number;
+  slaNormal: number;
+  slaHigh: number;
+  slaUrgent: number;
+  ai_assessment_enabled: boolean;
+}
+
+type SettingsDto = Record<string, unknown>;
+
+function toForm(dto: SettingsDto): SettingsForm {
+  const sla = (dto['sla_hours_by_priority'] as Record<string, unknown>) || {};
+  const num = (v: unknown, fb: number) => (typeof v === 'number' && Number.isFinite(v) ? v : fb);
+  const str = (v: unknown, fb: string) => (typeof v === 'string' ? v : fb);
+  return {
+    company_name: str(dto['company_name'], 'SunPower Solar Energy Pvt Ltd'),
+    company_address: str(dto['company_address'], ''),
+    company_gstin: str(dto['company_gstin'], ''),
+    company_bank_details: str(dto['company_bank_details'], ''),
+    company_phone: str(dto['company_phone'], ''),
+    company_email: str(dto['company_email'], ''),
+    target_margin_bp: num(dto['target_margin_bp'], 2000),
+    advance_threshold_percent: num(dto['advance_threshold_percent'], 30),
+    slaLow: num(sla['LOW'], 168),
+    slaNormal: num(sla['NORMAL'], 72),
+    slaHigh: num(sla['HIGH'], 24),
+    slaUrgent: num(sla['URGENT'], 4),
+    ai_assessment_enabled: dto['ai_assessment_enabled'] === true,
+  };
+}
+
 export default function SettingsClient({
   initialSettings,
   products,
   templates,
   users,
 }: SettingsClientProps) {
-  const [activeTab, setActiveTab] = useState<'BRANDING' | 'RULES' | 'CATALOGUE' | 'USERS'>('BRANDING');
+  const [activeTab, setActiveTab] = useState<'COMPANY' | 'BUSINESS' | 'AI' | 'CATALOGUE' | 'USERS'>('COMPANY');
   const [loading, setLoading] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [initializing, setInitializing] = useState(true);
 
-  const [form, setForm] = useState({
-    companyName: 'SunPower Solar Systems Pvt Ltd',
-    companyAddress: '401 SunPower Tower, SG Highway, Ahmedabad, Gujarat 380054',
-    companyGstin: '24AAACS1429B1Z8',
-    companyBank: 'HDFC Bank, A/C: 50200012345678, IFSC: HDFC0000123',
-    advancePercent: 30,
-    targetMarginPercent: 20,
-    salesDiscountLimit: 5,
+  const [form, setForm] = useState<SettingsForm>(() =>
+    toForm(
+      Object.fromEntries(
+        (initialSettings || []).map((s: any) => {
+          const v = s?.value;
+          return [s.key, typeof v === 'object' && v !== null && 'value' in (v as any) ? (v as any).value : v];
+        })
+      )
+    )
+  );
+
+  // Load the real managed settings from the API on mount (FR-9.2).
+  useEffect(() => {
+    let cancelled = false;
+    fetch('/api/v1/settings', { credentials: 'same-origin' })
+      .then(async (res) => {
+        if (!res.ok) {
+          const err = await res.json().catch(() => null);
+          throw new Error(err?.error?.message || 'Failed to load settings');
+        }
+        return res.json();
+      })
+      .then((data: { settings: SettingsDto }) => {
+        if (!cancelled) setForm(toForm(data.settings || {}));
+      })
+      .catch((err: Error) => {
+        if (!cancelled) setError(err.message || 'Failed to load settings');
+      })
+      .finally(() => {
+        if (!cancelled) setInitializing(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const buildPayload = () => ({
+    settings: {
+      company_name: form.company_name,
+      company_address: form.company_address,
+      company_gstin: form.company_gstin,
+      company_bank_details: form.company_bank_details,
+      company_phone: form.company_phone,
+      company_email: form.company_email,
+      target_margin_bp: Number(form.target_margin_bp),
+      advance_threshold_percent: Number(form.advance_threshold_percent),
+      sla_hours_by_priority: {
+        LOW: Number(form.slaLow),
+        NORMAL: Number(form.slaNormal),
+        HIGH: Number(form.slaHigh),
+        URGENT: Number(form.slaUrgent),
+      },
+      ai_assessment_enabled: form.ai_assessment_enabled,
+    },
   });
 
-  const handleSave = (e: React.FormEvent) => {
+  // Real save: PUT /api/v1/settings (audited server-side per key).
+  const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
-    setTimeout(() => {
-      setLoading(false);
+    setError(null);
+    setSaved(false);
+    try {
+      const res = await fetch('/api/v1/settings', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify(buildPayload()),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => null);
+        throw new Error(err?.error?.message || 'Failed to save settings');
+      }
       setSaved(true);
       setTimeout(() => setSaved(false), 3000);
-    }, 600);
+    } catch (err: any) {
+      setError(err.message || 'Error saving settings');
+    } finally {
+      setLoading(false);
+    }
   };
+
+  const textInput = (
+    key: keyof SettingsForm,
+    label: string,
+    opts: { mono?: boolean; placeholder?: string } = {}
+  ) => (
+    <div>
+      <label className="block text-xs font-semibold text-slate-700 mb-1">{label}</label>
+      <input
+        type="text"
+        value={String(form[key])}
+        onChange={(e) => setForm({ ...form, [key]: e.target.value })}
+        placeholder={opts.placeholder}
+        className={clsx('w-full p-2.5 text-xs border border-slate-300 rounded-lg', opts.mono && 'font-mono')}
+      />
+    </div>
+  );
+
+  const numberInput = (
+    key: keyof SettingsForm,
+    label: string,
+    opts: { min?: number; max?: number; suffix?: string } = {}
+  ) => (
+    <div>
+      <label className="block text-xs font-semibold text-slate-700 mb-1">
+        {label}
+        {opts.suffix ? <span className="text-slate-400 font-normal"> ({opts.suffix})</span> : null}
+      </label>
+      <input
+        type="number"
+        min={opts.min}
+        max={opts.max}
+        value={Number(form[key])}
+        onChange={(e) => setForm({ ...form, [key]: Number(e.target.value) })}
+        className="w-full p-2.5 text-xs border border-slate-300 rounded-lg"
+      />
+    </div>
+  );
+
+  const saveButton = (label: string) => (
+    <button
+      type="submit"
+      disabled={loading || initializing}
+      className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs rounded-lg flex items-center gap-1.5 shadow-xs disabled:opacity-60"
+    >
+      {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+      <span>{label}</span>
+    </button>
+  );
 
   return (
     <div className="space-y-6">
       {/* Tab Nav */}
-      <div className="flex gap-2 border-b border-slate-200">
+      <div className="flex gap-2 border-b border-slate-200 flex-wrap">
         {[
-          { key: 'BRANDING', label: 'Company & Branding' },
-          { key: 'RULES', label: 'Commercial & Margin Rules' },
+          { key: 'COMPANY', label: 'Company & Branding' },
+          { key: 'BUSINESS', label: 'Commercial & Margin Rules' },
+          { key: 'AI', label: 'AI Assessment' },
           { key: 'CATALOGUE', label: `Catalogue Products (${products.length})` },
           { key: 'USERS', label: `Staff & Users (${users.length})` },
         ].map((tab) => (
@@ -72,122 +236,122 @@ export default function SettingsClient({
       {saved && (
         <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-lg text-xs font-semibold text-emerald-800 flex items-center gap-2">
           <Check className="w-4 h-4 text-emerald-600" />
-          <span>Settings saved successfully!</span>
+          <span>Settings saved successfully! Changes are audited and applied immediately.</span>
         </div>
       )}
 
-      {/* Tab: Branding */}
-      {activeTab === 'BRANDING' && (
+      {error && (
+        <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-xs font-semibold text-red-800 flex items-center gap-2">
+          <AlertTriangle className="w-4 h-4 text-red-600" />
+          <span>{error}</span>
+        </div>
+      )}
+
+      {initializing && (
+        <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-500 flex items-center gap-2">
+          <Loader2 className="w-4 h-4 animate-spin" />
+          <span>Loading current settings&hellip;</span>
+        </div>
+      )}
+
+      {/* Tab: Company & Branding */}
+      {activeTab === 'COMPANY' && (
         <form onSubmit={handleSave} className="p-6 bg-white rounded-xl border border-slate-200 space-y-4 max-w-2xl">
-          <h2 className="text-sm font-bold text-slate-900">Company Information & Quotation Branding</h2>
-          
-          <div>
-            <label className="block text-xs font-semibold text-slate-700 mb-1">Company Registered Name</label>
-            <input
-              type="text"
-              value={form.companyName}
-              onChange={(e) => setForm({ ...form, companyName: e.target.value })}
-              className="w-full p-2.5 text-xs border border-slate-300 rounded-lg"
-            />
+          <h2 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+            <Building className="w-4 h-4 text-blue-600" />
+            Company Information &amp; Quotation Branding
+          </h2>
+
+          {textInput('company_name', 'Company Registered Name')}
+          {textInput('company_address', 'Official Address')}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            {textInput('company_gstin', 'GSTIN', { mono: true })}
+            {textInput('company_phone', 'Company Phone')}
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            {textInput('company_email', 'Company Email')}
+            {textInput('company_bank_details', 'Bank Payment Details')}
           </div>
 
-          <div>
-            <label className="block text-xs font-semibold text-slate-700 mb-1">Official Address</label>
-            <input
-              type="text"
-              value={form.companyAddress}
-              onChange={(e) => setForm({ ...form, companyAddress: e.target.value })}
-              className="w-full p-2.5 text-xs border border-slate-300 rounded-lg"
-            />
-          </div>
-
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">GSTIN</label>
-              <input
-                type="text"
-                value={form.companyGstin}
-                onChange={(e) => setForm({ ...form, companyGstin: e.target.value })}
-                className="w-full p-2.5 text-xs border border-slate-300 rounded-lg font-mono"
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">Bank Payment Details</label>
-              <input
-                type="text"
-                value={form.companyBank}
-                onChange={(e) => setForm({ ...form, companyBank: e.target.value })}
-                className="w-full p-2.5 text-xs border border-slate-300 rounded-lg"
-              />
-            </div>
-          </div>
-
-          <button
-            type="submit"
-            disabled={loading}
-            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs rounded-lg flex items-center gap-1.5 shadow-xs"
-          >
-            <Save className="w-4 h-4" />
-            <span>Save Branding</span>
-          </button>
+          {saveButton('Save Company Settings')}
         </form>
       )}
 
       {/* Tab: Commercial Rules */}
-      {activeTab === 'RULES' && (
+      {activeTab === 'BUSINESS' && (
         <form onSubmit={handleSave} className="p-6 bg-white rounded-xl border border-slate-200 space-y-4 max-w-2xl">
-          <h2 className="text-sm font-bold text-slate-900">Commercial & Financial Parameters</h2>
+          <h2 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+            <Percent className="w-4 h-4 text-blue-600" />
+            Commercial &amp; Financial Parameters
+          </h2>
 
-          <div>
-            <label className="block text-xs font-semibold text-slate-700 mb-1">
-              Order Confirmation Advance Threshold (%) (Default: 30% - Assumption A2 / Q1)
-            </label>
-            <input
-              type="number"
-              min={10}
-              max={100}
-              value={form.advancePercent}
-              onChange={(e) => setForm({ ...form, advancePercent: Number(e.target.value) })}
-              className="w-full p-2.5 text-xs border border-slate-300 rounded-lg"
-            />
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            {numberInput('advance_threshold_percent', 'Order Confirmation Advance Threshold', {
+              min: 10,
+              max: 100,
+              suffix: '% - Assumption A2 / Q1',
+            })}
+            {numberInput('target_margin_bp', 'Target Gross Margin Benchmark', {
+              min: 100,
+              max: 5000,
+              suffix: 'basis points - FR-3.8',
+            })}
+          </div>
+          <p className="text-[11px] text-slate-400">
+            Target margin: {(Number(form.target_margin_bp) / 100).toFixed(1)}% - used by the quote
+            engine for margin warnings (FR-3.8).
+          </p>
+
+          <div className="pt-3 border-t border-slate-100">
+            <p className="text-xs font-semibold text-slate-700 mb-2">
+              Ticket SLA Hours by Priority (used by the service desk)
+            </p>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              {numberInput('slaUrgent', 'Urgent', { min: 1 })}
+              {numberInput('slaHigh', 'High', { min: 1 })}
+              {numberInput('slaNormal', 'Normal', { min: 1 })}
+              {numberInput('slaLow', 'Low', { min: 1 })}
+            </div>
           </div>
 
-          <div>
-            <label className="block text-xs font-semibold text-slate-700 mb-1">
-              Target Gross Margin Benchmark (%) (Default: 20% - FR-3.8)
-            </label>
-            <input
-              type="number"
-              min={5}
-              max={50}
-              value={form.targetMarginPercent}
-              onChange={(e) => setForm({ ...form, targetMarginPercent: Number(e.target.value) })}
-              className="w-full p-2.5 text-xs border border-slate-300 rounded-lg"
-            />
+          <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg text-[11px] text-slate-500">
+            Sales maximum discount authority is fixed at 5% by role rules (Q5 / FR-3.4) and cannot be
+            changed here; the Director approves larger discounts on the quote screen.
           </div>
 
-          <div>
-            <label className="block text-xs font-semibold text-slate-700 mb-1">
-              Sales Maximum Discount Authority (%) (Default: 5% - Q5 / FR-3.4)
-            </label>
-            <input
-              type="number"
-              min={0}
-              max={20}
-              value={form.salesDiscountLimit}
-              onChange={(e) => setForm({ ...form, salesDiscountLimit: Number(e.target.value) })}
-              className="w-full p-2.5 text-xs border border-slate-300 rounded-lg"
-            />
-          </div>
+          {saveButton('Save Business Rules')}
+        </form>
+      )}
 
-          <button
-            type="submit"
-            disabled={loading}
-            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs rounded-lg flex items-center gap-1.5 shadow-xs"
-          >
-            <Save className="w-4 h-4" />
-            <span>Save Rules</span>
-          </button>
+      {/* Tab: AI Assessment (FR-2.7) */}
+      {activeTab === 'AI' && (
+        <form onSubmit={handleSave} className="p-6 bg-white rounded-xl border border-slate-200 space-y-4 max-w-2xl">
+          <h2 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+            <Sparkles className="w-4 h-4 text-amber-500" />
+            AI Site Assessment &amp; Photo Analysis
+          </h2>
+
+          <label className="flex items-start gap-3 p-3.5 bg-slate-50 border border-slate-200 rounded-lg cursor-pointer">
+            <input
+              type="checkbox"
+              checked={form.ai_assessment_enabled}
+              onChange={(e) => setForm({ ...form, ai_assessment_enabled: e.target.checked })}
+              className="mt-0.5 rounded text-blue-600 focus:ring-blue-500"
+            />
+            <span className="text-xs text-slate-700">
+              <span className="block font-semibold text-slate-900">
+                Enable Gemini AI assessment &amp; vision calls (ai_assessment_enabled)
+              </span>
+              <span className="block text-slate-500 mt-0.5">
+                When OFF (default), all AI summaries and photo analyses use the deterministic
+                templated fallback and no external AI request is made. When ON, the Gemini API key
+                (GEMINI_API_KEY env) is used for customer summaries and advisory survey photo
+                analysis - still strictly advisory and zero-PII.
+              </span>
+            </span>
+          </label>
+
+          {saveButton('Save AI Settings')}
         </form>
       )}
 
@@ -273,4 +437,3 @@ export default function SettingsClient({
     </div>
   );
 }
-

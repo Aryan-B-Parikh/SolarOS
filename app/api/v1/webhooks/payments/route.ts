@@ -20,4 +20,3 @@ export async function POST(req: NextRequest) {
 
   return NextResponse.json({ received: true, provider: 'generic' }, { status: 200 });
 }
-

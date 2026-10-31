@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { ZodSchema, ZodError } from 'zod';
+import { z, ZodType, ZodError } from 'zod';
 import { AppError, formatErrorResponse } from './errors';
 import { logger } from './logger';
 import { Role, requireRole } from './rbac';
 import { extractToken, verifyJwt } from './jwt';
+import { validateSession } from './auth';
 
 // Ensure BigInt values can be serialized by NextResponse.json / JSON.stringify
 if (typeof BigInt.prototype !== 'undefined' && !(BigInt.prototype as any).toJSON) {
@@ -12,10 +13,12 @@ if (typeof BigInt.prototype !== 'undefined' && !(BigInt.prototype as any).toJSON
   };
 }
 
+export const SESSION_COOKIE = 'solaros_session';
+export const SESSION_COOKIE_NAME = 'sunpower_session';
 
 export interface HandlerOptions<TBody = any, TQuery = any> {
-  bodySchema?: ZodSchema<TBody>;
-  querySchema?: ZodSchema<TQuery>;
+  bodySchema?: z.ZodType<any, any, any>;
+  querySchema?: z.ZodType<any, any, any>;
   allowedRoles?: Role[];
   public?: boolean;
 }
@@ -33,30 +36,61 @@ export interface HandlerContext<TBody = any, TQuery = any> {
   query: TQuery;
   user?: AuthenticatedUser;
   requestId: string;
+  /** Dynamic route params, e.g. `{ id }` for app/api/v1/tickets/[id]/route.ts */
+  params: Record<string, string>;
+}
+
+/**
+ * Extracts session or bearer token from cookie or Authorization header.
+ */
+function extractSessionToken(req: NextRequest): string | null {
+  const cookieToken =
+    req.cookies.get(SESSION_COOKIE)?.value ||
+    req.cookies.get(SESSION_COOKIE_NAME)?.value;
+  if (cookieToken) return cookieToken;
+
+  const authHeader = req.headers.get('authorization');
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    return authHeader.slice('Bearer '.length).trim() || null;
+  }
+  return null;
 }
 
 /**
  * Clean Next.js App Router API Route Handler wrapper
  * 1. Generates / extracts requestId
- * 2. Parses & validates JSON body and query parameters via Zod
+ * 2. Authenticates staff via DB-backed session or Edge JWT
  * 3. Enforces RBAC permissions
- * 4. Catches all errors and maps to standard JSON response format
- * 5. Structured logging
+ * 4. Parses & validates JSON body and query parameters via Zod
+ * 5. Passes params to handler function
+ * 6. Catches all errors and maps to standard JSON response format
+ * 7. Structured logging
  */
 export function createApiHandler<TBody = any, TQuery = any>(
   options: HandlerOptions<TBody, TQuery>,
   fn: (ctx: HandlerContext<TBody, TQuery>) => Promise<NextResponse | Response | any>
 ) {
-  return async function (req: NextRequest): Promise<NextResponse> {
-    const requestId = req.headers.get('x-request-id') || `req-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 6)}`;
+  return async function (
+    req: NextRequest,
+    routeCtx?: { params?: Promise<Record<string, string>> | Record<string, string> }
+  ): Promise<NextResponse> {
+    const requestId =
+      req.headers.get('x-request-id') ||
+      `req-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 6)}`;
     const startTime = Date.now();
+
+    // Dynamic route params (Next 14: plain object, Next 15: promise)
+    let params: Record<string, string> = {};
+    if (routeCtx?.params) {
+      params =
+        routeCtx.params instanceof Promise ? await routeCtx.params : { ...routeCtx.params };
+    }
 
     try {
       // 1. RBAC / Session check if not explicitly public
       let user: AuthenticatedUser | undefined;
       if (!options.public) {
-        // Auth header / session verification
-        const authHeader = req.headers.get('authorization');
+        // A. Check trusted internal headers set by Edge middleware (if present)
         const roleHeader = req.headers.get('x-user-role') as Role;
         const userIdHeader = req.headers.get('x-user-id');
 
@@ -68,26 +102,47 @@ export function createApiHandler<TBody = any, TQuery = any>(
             role: roleHeader,
           };
         } else {
-          // Check for signed JWT in cookie or Authorization Bearer header
-          const cookieHeader = req.headers.get('cookie');
-          const token = extractToken(cookieHeader, authHeader);
+          // B. Extract token from cookie or Authorization header
+          const token = extractSessionToken(req);
           if (token) {
-            const payload = verifyJwt(token);
-            if (payload) {
-              user = {
-                id: payload.userId,
-                name: payload.name,
-                email: payload.email,
-                role: payload.role,
-              };
+            // First check if token is signed JWT
+            if (token.includes('.')) {
+              const payload = verifyJwt(token);
+              if (payload) {
+                user = {
+                  id: payload.userId,
+                  name: payload.name,
+                  email: payload.email,
+                  role: payload.role,
+                };
+              }
+            }
+
+            // If not verified as JWT or needs DB validation, check DB session
+            if (!user) {
+              try {
+                const session = await validateSession(token);
+                if (session) {
+                  user = {
+                    id: session.user.id,
+                    name: session.user.name,
+                    email: session.user.email,
+                    role: session.user.role as Role,
+                  };
+                }
+              } catch (err) {
+                logger.warn('Session validation failed', { requestId, error: String(err) });
+              }
             }
           }
         }
 
+        // Non-public routes require authentication
+        if (!user) {
+          throw new AppError('UNAUTHENTICATED', 'Authentication required', 401);
+        }
+
         if (options.allowedRoles && options.allowedRoles.length > 0) {
-          if (!user) {
-            throw new AppError('UNAUTHENTICATED', 'Authentication required', 401);
-          }
           requireRole(user.role, options.allowedRoles);
         }
       }
@@ -116,6 +171,7 @@ export function createApiHandler<TBody = any, TQuery = any>(
           body = parseResult.data;
         } catch (e) {
           if (e instanceof AppError) throw e;
+          if (e instanceof ZodError) throw e;
           throw new AppError('VALIDATION_FAILED', 'Malformed JSON payload', 400);
         }
       }
@@ -127,6 +183,7 @@ export function createApiHandler<TBody = any, TQuery = any>(
         query,
         user,
         requestId,
+        params,
       });
 
       const durationMs = Date.now() - startTime;
@@ -158,4 +215,3 @@ export function createApiHandler<TBody = any, TQuery = any>(
     }
   };
 }
-

@@ -19,9 +19,17 @@ interface LeadDetailClientProps {
   initialLead: any;
   technicians: any[];
   templates: any[];
+  currentUser?: { id: string; name: string; role: string } | null;
+  surveyPhotoCount?: number;
 }
 
-export default function LeadDetailClient({ initialLead, technicians, templates }: LeadDetailClientProps) {
+export default function LeadDetailClient({
+  initialLead,
+  technicians,
+  templates,
+  currentUser,
+  surveyPhotoCount = 0,
+}: LeadDetailClientProps) {
   const router = useRouter();
   const [lead, setLead] = useState(initialLead);
   const [loading, setLoading] = useState(false);
@@ -55,6 +63,8 @@ export default function LeadDetailClient({ initialLead, technicians, templates }
   });
 
   // Determine Next Action based on State Machine
+  const surveyCompleted = lead.survey?.status === 'COMPLETED';
+
   const getNextActionConfig = () => {
     switch (lead.status) {
       case 'NEW':
@@ -82,6 +92,15 @@ export default function LeadDetailClient({ initialLead, technicians, templates }
           variant: 'action' as const,
         };
       case 'SURVEY_SCHEDULED':
+        if (surveyCompleted) {
+          return {
+            title: 'Review Survey & Sizing',
+            description: `Survey completed by ${lead.survey?.surveyor?.name || 'Technician'}. Review roof specs, photos, and shade profile to approve sizing.`,
+            actionLabel: 'Review Survey',
+            onAction: () => setIsReviewSurveyOpen(true),
+            variant: 'action' as const,
+          };
+        }
         return {
           title: 'Site Survey in Progress',
           description: `Survey assigned to ${lead.survey?.surveyor?.name || 'Technician'}. Awaiting roof measurements.`,
@@ -89,14 +108,6 @@ export default function LeadDetailClient({ initialLead, technicians, templates }
           disabled: true,
           disabledReason: 'Technician must submit measurements and photos from mobile field app',
           variant: 'warning' as const,
-        };
-      case 'SURVEY_COMPLETED':
-        return {
-          title: 'Review Survey & Sizing',
-          description: `Survey completed by ${lead.survey?.surveyor?.name || 'Technician'}. Review roof specs, tilt, and shade profile to approve sizing.`,
-          actionLabel: 'Review Survey',
-          onAction: () => setIsReviewSurveyOpen(true),
-          variant: 'action' as const,
         };
       case 'SURVEY_APPROVED':
         return {
@@ -222,6 +233,10 @@ export default function LeadDetailClient({ initialLead, technicians, templates }
 
   const handleReviewSurvey = async (action: 'APPROVE' | 'REJECT') => {
     if (!lead.survey?.id) return;
+    if (action === 'REJECT' && !rejectReason.trim()) {
+      alert('A rejection reason is required.');
+      return;
+    }
     setReviewLoading(true);
     try {
       const res = await fetch(`/api/v1/surveys/${lead.survey.id}/review`, {
@@ -234,11 +249,69 @@ export default function LeadDetailClient({ initialLead, technicians, templates }
         throw new Error(data.error?.message || 'Failed to review survey');
       }
       setIsReviewSurveyOpen(false);
+      setRejectReason('');
       router.refresh();
     } catch (err: any) {
       alert(err.message);
     } finally {
       setReviewLoading(false);
+    }
+  };
+
+  // FR-2.2: book the site survey (surveyor + datetime) via the leads API.
+  const handleBookSurvey = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!surveyBooking.surveyorId || !surveyBooking.scheduledAt) {
+      alert('Select a surveyor and a date/time.');
+      return;
+    }
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/v1/leads/${lead.id}/surveys`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          surveyorId: surveyBooking.surveyorId,
+          scheduledAt: new Date(surveyBooking.scheduledAt).toISOString(),
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        alert(err.error?.message || 'Failed to book survey');
+        return;
+      }
+      setIsSurveyModalOpen(false);
+      router.refresh();
+    } catch (err: any) {
+      alert(err.message || 'Error booking survey');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // FR-2.7: run advisory AI photo analysis for the survey photos (DIRECTOR).
+  const [aiAnalysis, setAiAnalysis] = useState<{
+    loading: boolean;
+    result: any | null;
+    error: string | null;
+  }>({ loading: false, result: null, error: null });
+
+  const handleRunPhotoAnalysis = async () => {
+    setAiAnalysis({ loading: true, result: null, error: null });
+    try {
+      const res = await fetch(`/api/v1/assessments/${lead.id}/analyze-photos`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error?.message || 'Photo analysis failed');
+      }
+      setAiAnalysis({ loading: false, result: data, error: null });
+      router.refresh();
+    } catch (err: any) {
+      setAiAnalysis({ loading: false, result: null, error: err.message || 'Photo analysis failed' });
     }
   };
 
@@ -420,6 +493,133 @@ export default function LeadDetailClient({ initialLead, technicians, templates }
             </div>
           </div>
 
+          {/* Survey Review Card (FR-2.4): COMPLETED survey awaiting director review */}
+          {lead.survey && surveyCompleted && lead.status === 'SURVEY_SCHEDULED' && (
+            <div className="p-5 rounded-xl border border-blue-300 bg-blue-50/40 shadow-xs space-y-4">
+              <div className="flex items-center justify-between pb-3 border-b border-blue-100">
+                <h2 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                  <Compass className="w-4 h-4 text-blue-600" />
+                  <span>Survey Review (awaiting approval)</span>
+                </h2>
+                <span className="text-[11px] font-bold px-2 py-0.5 rounded bg-blue-100 text-blue-800">
+                  {lead.survey.status}
+                </span>
+              </div>
+
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+                <div className="bg-white p-3 rounded-lg border border-blue-100">
+                  <span className="text-slate-400 block text-[11px]">Roof Type / Tilt</span>
+                  <span className="font-bold text-slate-800 mt-0.5 block">
+                    {lead.survey.roof_type || 'RCC_FLAT'} &bull; {lead.survey.tilt_deg}&deg; @ {lead.survey.azimuth_deg}&deg;
+                  </span>
+                </div>
+                <div className="bg-white p-3 rounded-lg border border-blue-100">
+                  <span className="text-slate-400 block text-[11px]">Usable Area</span>
+                  <span className="font-bold text-slate-800 mt-0.5 block">{lead.survey.usable_area_sqm} m&sup2;</span>
+                </div>
+                <div className="bg-white p-3 rounded-lg border border-blue-100">
+                  <span className="text-slate-400 block text-[11px]">Shading / Cable</span>
+                  <span className="font-bold text-slate-800 mt-0.5 block">
+                    {lead.survey.shading || 'NONE'} &bull; {lead.survey.cable_distance_m} m
+                  </span>
+                </div>
+                <div className="bg-white p-3 rounded-lg border border-blue-100">
+                  <span className="text-slate-400 block text-[11px]">Photos Attached</span>
+                  <span className={clsx('font-bold mt-0.5 block', surveyPhotoCount > 0 ? 'text-emerald-700' : 'text-red-600')}>
+                    {surveyPhotoCount} photo{surveyPhotoCount === 1 ? '' : 's'}
+                  </span>
+                </div>
+              </div>
+
+              {/* Assessment flags (FR-2.6): ROOF_AREA_CONSTRAINT etc. */}
+              {lead.assessment?.flags && lead.assessment.flags.length > 0 && (
+                <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg space-y-1">
+                  <p className="text-[11px] font-bold text-amber-900 uppercase tracking-wider">Assessment Flags</p>
+                  {lead.assessment.flags.map((flag: string, i: number) => (
+                    <p key={i} className="text-[11px] text-amber-800 font-medium flex items-start gap-1.5">
+                      <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0 mt-px" />
+                      <span>{flag}</span>
+                    </p>
+                  ))}
+                </div>
+              )}
+
+              {/* Advisory AI photo findings (FR-2.7) */}
+              {lead.assessment?.photo_findings && (
+                <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg text-[11px] text-slate-600 space-y-1">
+                  <p className="font-bold text-slate-700 uppercase tracking-wider">
+                    AI Photo Findings (advisory, model {lead.assessment.photo_model || 'n/a'})
+                  </p>
+                  <p>Shading sources: {(lead.assessment.photo_findings.shadingSources || []).join(', ') || '—'}</p>
+                  <p>Obstructions: {(lead.assessment.photo_findings.obstructions || []).join(', ') || '—'}</p>
+                  <p>Photo quality: {lead.assessment.photo_findings.photoQuality || '—'}</p>
+                </div>
+              )}
+              {aiAnalysis.error && (
+                <p className="text-[11px] text-red-700">{aiAnalysis.error}</p>
+              )}
+              {aiAnalysis.result?.findings && (
+                <p className="text-[11px] text-emerald-700">
+                  Photo analysis re-run: quality {aiAnalysis.result.findings.photoQuality}, confidence{' '}
+                  {aiAnalysis.result.findings.confidence}
+                  {aiAnalysis.result.findings.fallbackUsed ? ' (deterministic fallback - AI disabled or unreachable)' : ''}.
+                </p>
+              )}
+
+              <div className="space-y-2">
+                <label className="block text-xs font-semibold text-slate-700">Rejection reason (if rejecting)</label>
+                <input
+                  type="text"
+                  value={rejectReason}
+                  onChange={(e) => setRejectReason(e.target.value)}
+                  placeholder="e.g. Inadequate roof area or heavy shading"
+                  className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg"
+                />
+              </div>
+
+              <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-blue-100">
+                <a
+                  href={`/tech/survey/${lead.survey.id}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-[11px] font-semibold text-blue-700 underline hover:text-blue-900"
+                >
+                  Open mobile survey form &rarr;
+                </a>
+                <div className="flex items-center gap-2">
+                  {currentUser?.role === 'DIRECTOR' && (
+                    <button
+                      type="button"
+                      onClick={handleRunPhotoAnalysis}
+                      disabled={aiAnalysis.loading}
+                      className="px-3 py-2 text-xs font-semibold rounded-lg border border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-800 flex items-center gap-1.5 disabled:opacity-60"
+                      title="Run advisory Gemini vision analysis on the survey photos (FR-2.7)"
+                    >
+                      <Sparkles className="w-3.5 h-3.5" />
+                      <span>{aiAnalysis.loading ? 'Analysing…' : 'Run AI Photo Analysis'}</span>
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    disabled={reviewLoading || !rejectReason.trim()}
+                    onClick={() => handleReviewSurvey('REJECT')}
+                    className="px-4 py-2 text-xs font-semibold rounded-lg text-red-700 bg-red-100 hover:bg-red-200 disabled:opacity-50"
+                  >
+                    Reject Survey
+                  </button>
+                  <button
+                    type="button"
+                    disabled={reviewLoading}
+                    onClick={() => handleReviewSurvey('APPROVE')}
+                    className="px-4 py-2 text-xs font-semibold rounded-lg text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60"
+                  >
+                    {reviewLoading ? 'Processing…' : 'Approve Survey & Sizing'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Site Assessment & Survey Summary (Screen S4) */}
           {lead.assessment && (
             <div className="p-5 rounded-xl border border-blue-200 bg-blue-50/30 shadow-xs space-y-4">
@@ -459,6 +659,17 @@ export default function LeadDetailClient({ initialLead, technicians, templates }
                   </span>
                 </div>
               </div>
+
+              {lead.assessment.flags && lead.assessment.flags.length > 0 && (
+                <div className="bg-amber-50 p-3 rounded-lg border border-amber-200 space-y-1">
+                  <p className="text-[11px] font-bold text-amber-900 uppercase tracking-wider">Constraint Flags (FR-2.6)</p>
+                  {lead.assessment.flags.map((flag: string, i: number) => (
+                    <p key={i} className="text-[11px] text-amber-800 font-medium">
+                      &bull; {flag}
+                    </p>
+                  ))}
+                </div>
+              )}
 
               {lead.assessment.ai_summary && (
                 <div className="bg-white p-3.5 rounded-lg border border-blue-100 text-xs text-slate-700">
@@ -728,6 +939,72 @@ export default function LeadDetailClient({ initialLead, technicians, templates }
                 </button>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Book Survey Modal (FR-2.2) */}
+      {isSurveyModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/50 backdrop-blur-xs">
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-xl w-full max-w-md p-6">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                <Calendar className="w-5 h-5 text-blue-600" />
+                <span>Book Site Survey (FR-2.2)</span>
+              </h2>
+              <button type="button" onClick={() => setIsSurveyModalOpen(false)} className="text-slate-400 p-1">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleBookSurvey} className="space-y-4 mt-4">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Surveyor *</label>
+                <select
+                  required
+                  value={surveyBooking.surveyorId}
+                  onChange={(e) => setSurveyBooking({ ...surveyBooking, surveyorId: e.target.value })}
+                  className="w-full px-2.5 py-2 text-xs border border-slate-300 rounded-lg bg-white"
+                >
+                  <option value="">Select a surveyor&hellip;</option>
+                  {technicians.map((t: any) => (
+                    <option key={t.user_id} value={t.user_id}>
+                      {t.user?.name || 'Technician'}
+                      {t.skills?.includes('SURVEY') ? ' (Survey skilled)' : ''}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Scheduled Date &amp; Time *</label>
+                <input
+                  type="datetime-local"
+                  required
+                  value={surveyBooking.scheduledAt}
+                  onChange={(e) => setSurveyBooking({ ...surveyBooking, scheduledAt: e.target.value })}
+                  className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg"
+                />
+                <span className="text-[10px] text-slate-400">Business hours (09:00-18:00 IST, Mon-Sat) recommended.</span>
+              </div>
+
+              <div className="flex justify-end gap-3 pt-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setIsSurveyModalOpen(false)}
+                  className="px-4 py-2 text-xs font-semibold text-slate-600"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="px-4 py-2 text-xs font-semibold rounded-lg bg-blue-600 hover:bg-blue-700 text-white shadow-xs disabled:opacity-60"
+                >
+                  {loading ? 'Booking…' : 'Book Survey'}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

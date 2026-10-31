@@ -2,12 +2,13 @@ import React from 'react';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { getTicket } from '@/services/tickets';
+import { getSessionUser } from '@/lib/session';
 import { StageChip } from '@/components/StageChip';
 import { WarrantyBar } from '@/components/WarrantyBar';
 import { formatDateIST } from '@/lib/dates';
 import { formatPaiseLakhs } from '@/lib/money';
-import { 
-  ShieldCheck, ShieldAlert, AlertTriangle, Clock, 
+import {
+  ShieldCheck, ShieldAlert, AlertTriangle, Clock,
   Wrench, CheckCircle2, User, Phone, MapPin, ArrowLeft,
   RefreshCw, FileText
 } from 'lucide-react';
@@ -22,6 +23,10 @@ export default async function TicketDetailPage({ params }: { params: { id: strin
   } catch (e) {
     notFound();
   }
+
+  // FR-7.7: warranty exclusion is DIRECTOR-only — the client needs the role
+  // to decide whether to render the exclusion panel.
+  const user = await getSessionUser();
 
   return (
     <div className="space-y-6 max-w-5xl mx-auto pb-16">
@@ -160,7 +165,7 @@ export default async function TicketDetailPage({ params }: { params: { id: strin
       </div>
 
       {/* Interactive Actions, Replacement & Resolution Client */}
-      <TicketDetailClient ticket={ticket} />
+      <TicketDetailClient ticket={ticket} userRole={user?.role || null} />
     </div>
   );
 }

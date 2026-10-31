@@ -3,6 +3,8 @@
  * Specification Reference: TRD 2.4, Backend Schema 5.3 & 5.4, PRD C9, Phase 7
  */
 
+import type { TicketCategory, TicketPriority } from './fault-codes.ts';
+
 export type { TicketCategory, TicketPriority } from './fault-codes.ts';
 
 export type TicketChannel = 'PHONE' | 'WHATSAPP' | 'WEB' | 'VISIT' | 'MAINTENANCE_ALERT';

@@ -19,6 +19,7 @@
 import { useEffect } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import { flushOfflineQueue, isOnline, onOnline } from '@/lib/offline-queue';
 
 const NAV_ITEMS = [
   { href: '/tech/today', label: 'Today', icon: CalendarIcon },
@@ -81,6 +82,19 @@ export default function FieldShell({ children }: { children: React.ReactNode }) 
           console.warn('[SW] Registration failed:', err);
         });
     }
+  }, []);
+
+  // Reconnect: replay every queued upload & mutation (FR-6.7 / D8).
+  // The queue only drains through this hook, so also flush on mount in case
+  // the app was reloaded while already back online.
+  useEffect(() => {
+    const dispose = onOnline(() => {
+      flushOfflineQueue().catch(() => {});
+    });
+    if (isOnline()) {
+      flushOfflineQueue().catch(() => {});
+    }
+    return dispose;
   }, []);
 
   return (

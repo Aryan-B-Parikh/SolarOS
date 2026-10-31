@@ -166,7 +166,7 @@ export async function createRazorpayOrder(params: {
 
     if (!res.ok) {
       const err = await res.json() as any;
-      throw new AppError('GATEWAY_ERROR', `Razorpay order creation failed: ${err.error?.description || 'Unknown error'}`, 502);
+      throw new AppError('UPSTREAM_ERROR', `Razorpay order creation failed: ${err.error?.description || 'Unknown error'}`, 502);
     }
 
     const data = await res.json() as any;

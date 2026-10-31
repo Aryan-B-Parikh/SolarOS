@@ -1,15 +1,21 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { 
-  CheckCircle2, RefreshCw, Wrench, FileText, 
-  Send, AlertCircle, ArrowRight, ShieldAlert 
+import {
+  CheckCircle2, RefreshCw, Wrench,
+  AlertCircle, ShieldAlert, Camera, Ban
 } from 'lucide-react';
 import { formatDateIST } from '@/lib/dates';
 import { formatPaiseLakhs } from '@/lib/money';
 
-export default function TicketDetailClient({ ticket }: { ticket: any }) {
+export default function TicketDetailClient({
+  ticket,
+  userRole,
+}: {
+  ticket: any;
+  userRole: string | null;
+}) {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -34,6 +40,74 @@ export default function TicketDetailClient({ ticket }: { ticket: any }) {
   const [showReopenModal, setShowReopenModal] = useState(false);
   const [reopenReason, setReopenReason] = useState('');
 
+  // FR-7.7 Warranty Exclusion State (DIRECTOR only, photo evidence required)
+  const [excludeReason, setExcludeReason] = useState('');
+  const [excludePhotoId, setExcludePhotoId] = useState<string | null>(null);
+  const [excludePhotoName, setExcludePhotoName] = useState<string | null>(null);
+  const [excludeUploading, setExcludeUploading] = useState(false);
+  const [excludeSubmitting, setExcludeSubmitting] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const isDirector = userRole === 'DIRECTOR';
+  const alreadyExcluded =
+    ticket.warranty_verdict === 'EXCLUDED' || ticket.warranty?.status === 'VOID';
+
+  const handleUploadEvidence = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setExcludeUploading(true);
+    setErrorMessage(null);
+    try {
+      const form = new FormData();
+      form.append('file', file);
+      form.append('entityType', 'TICKET');
+      form.append('entityId', ticket.id);
+      form.append('kind', 'OTHER');
+      const res = await fetch('/api/v1/uploads', { method: 'POST', body: form });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error?.message || 'Photo upload failed');
+      setExcludePhotoId(data.id);
+      setExcludePhotoName(file.name);
+    } catch (err: any) {
+      setErrorMessage(err.message);
+      setExcludePhotoId(null);
+      setExcludePhotoName(null);
+    } finally {
+      setExcludeUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
+  const handleExcludeWarranty = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!excludePhotoId) {
+      setErrorMessage('Photo evidence is required before excluding warranty (FR-7.7).');
+      return;
+    }
+    setExcludeSubmitting(true);
+    setErrorMessage(null);
+    try {
+      const res = await fetch(`/api/v1/tickets/${ticket.id}/exclude`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          reason: excludeReason,
+          photoAttachmentId: excludePhotoId,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error?.message || 'Exclusion failed');
+      setExcludeReason('');
+      setExcludePhotoId(null);
+      setExcludePhotoName(null);
+      router.refresh();
+    } catch (err: any) {
+      setErrorMessage(err.message);
+    } finally {
+      setExcludeSubmitting(false);
+    }
+  };
+
   // Handlers
   const handleReplacePart = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -42,7 +116,7 @@ export default function TicketDetailClient({ ticket }: { ticket: any }) {
     try {
       const res = await fetch(`/api/v1/tickets/${ticket.id}/parts/replace`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-user-role': 'SUPPORT', 'x-user-id': '00000000-0000-0000-0000-000000000001' },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           removedUnitCode: removedCode,
           replacementUnitCode: replacementCode,
@@ -66,7 +140,7 @@ export default function TicketDetailClient({ ticket }: { ticket: any }) {
     try {
       const res = await fetch(`/api/v1/tickets/${ticket.id}/resolve`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-user-role': 'SUPPORT', 'x-user-id': '00000000-0000-0000-0000-000000000001' },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           resolutionNotes,
           isChargeable,
@@ -91,7 +165,7 @@ export default function TicketDetailClient({ ticket }: { ticket: any }) {
     try {
       const res = await fetch(`/api/v1/tickets/${ticket.id}/confirm`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-user-role': 'SUPPORT', 'x-user-id': '00000000-0000-0000-0000-000000000001' },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           confirmationMethod: confirmMethod,
           customerFeedback: feedback,
@@ -115,7 +189,7 @@ export default function TicketDetailClient({ ticket }: { ticket: any }) {
     try {
       const res = await fetch(`/api/v1/tickets/${ticket.id}/reopen`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-user-role': 'SUPPORT', 'x-user-id': '00000000-0000-0000-0000-000000000001' },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ reason: reopenReason }),
       });
       const data = await res.json();
@@ -186,6 +260,82 @@ export default function TicketDetailClient({ ticket }: { ticket: any }) {
           )}
         </div>
       </div>
+
+      {/* FR-7.7: Warranty Exclusion Panel (DIRECTOR only, photo evidence mandatory) */}
+      {isDirector && !alreadyExcluded && (
+        <div className="bg-white border border-red-200 rounded-xl p-5 shadow-xs space-y-3">
+          <h2 className="text-xs font-bold uppercase tracking-wider text-red-700 flex items-center gap-2">
+            <Ban className="w-4 h-4 text-red-600" />
+            <span>Exclude from Warranty (Director Approval, FR-7.7)</span>
+          </h2>
+          <p className="text-[11px] text-slate-500">
+            Excluding warranty voids the linked warranty record and switches this ticket to CHARGEABLE billing.
+            Photo evidence (physical damage / tampering) is <strong>mandatory</strong> — upload at least one photo
+            taken against this ticket before submitting.
+          </p>
+          <form onSubmit={handleExcludeWarranty} className="space-y-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-[11px] font-bold uppercase text-slate-600">
+                  Photo Evidence <span className="text-red-500">(required)</span>
+                </label>
+                <div className="mt-1 flex items-center gap-2">
+                  <label className="px-3 py-1.5 rounded-lg border border-slate-300 text-slate-700 hover:bg-slate-50 text-xs font-semibold flex items-center gap-1.5 cursor-pointer">
+                    <Camera className="w-3.5 h-3.5 text-slate-500" />
+                    <span>{excludeUploading ? 'Uploading…' : 'Upload photo'}</span>
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp"
+                      className="hidden"
+                      onChange={handleUploadEvidence}
+                      disabled={excludeUploading}
+                    />
+                  </label>
+                  {excludePhotoId && (
+                    <span className="text-[11px] text-emerald-700 font-semibold truncate">
+                      ✓ {excludePhotoName || 'photo uploaded'} ({excludePhotoId.slice(0, 8)}…)
+                    </span>
+                  )}
+                </div>
+              </div>
+              <div>
+                <label className="block text-[11px] font-bold uppercase text-slate-600">
+                  Exclusion Reason <span className="text-red-500">(min 3 chars)</span>
+                </label>
+                <input
+                  type="text"
+                  required
+                  minLength={3}
+                  value={excludeReason}
+                  onChange={(e) => setExcludeReason(e.target.value)}
+                  className="w-full mt-1 px-3 py-2 text-xs border rounded-lg focus:ring-2 focus:ring-red-500 outline-none"
+                  placeholder="e.g. Physical impact damage to panel array"
+                />
+              </div>
+            </div>
+            <div className="flex justify-end">
+              <button
+                type="submit"
+                disabled={excludeSubmitting || !excludePhotoId || excludeReason.trim().length < 3}
+                className="px-3.5 py-1.5 text-xs bg-red-600 hover:bg-red-700 text-white font-semibold rounded-lg disabled:opacity-50 flex items-center gap-1.5"
+              >
+                <ShieldAlert className="w-3.5 h-3.5" />
+                <span>{excludeSubmitting ? 'Excluding…' : 'Exclude Warranty & Mark Chargeable'}</span>
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+      {isDirector && alreadyExcluded && (
+        <div className="bg-red-50 border border-red-200 rounded-xl p-4 text-xs text-red-800 flex items-center gap-2">
+          <ShieldAlert className="w-4 h-4 text-red-600 shrink-0" />
+          <span>
+            Warranty excluded / voided for this ticket{ticket.warranty?.void_reason ? ` — reason: ${ticket.warranty.void_reason}` : ''}.
+            Billing mode is CHARGEABLE.
+          </span>
+        </div>
+      )}
 
       {/* Parts & Billing Section */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">

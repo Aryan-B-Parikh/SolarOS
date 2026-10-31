@@ -17,6 +17,8 @@ export default function PurchaseOrderDetailPage() {
   const poId = params.id as string;
   const [po, setPo] = useState<PODetail | null>(null);
   const [loading, setLoading] = useState(true);
+  const [cancelling, setCancelling] = useState(false);
+  const [cancelError, setCancelError] = useState('');
 
   useEffect(() => {
     fetch(`/api/v1/purchase-orders/${poId}`)
@@ -25,6 +27,29 @@ export default function PurchaseOrderDetailPage() {
 
   function formatMoney(paise: number) {
     return 'Rs ' + Math.round(paise / 100).toLocaleString('en-IN');
+  }
+
+  async function handleCancel() {
+    const reason = (prompt('Cancel this purchase order. Reason (required):') || '').trim();
+    if (!reason) return;
+    setCancelling(true);
+    setCancelError('');
+    try {
+      const res = await fetch(`/api/v1/purchase-orders/${poId}/cancel`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error?.message || data.message || 'Cancellation failed');
+      }
+      setPo((prev) => (prev ? { ...prev, status: 'CANCELLED' } : prev));
+    } catch (err: any) {
+      setCancelError(err.message || 'Cancellation failed');
+    } finally {
+      setCancelling(false);
+    }
   }
 
   if (loading) return <div style={{ padding: '40px', textAlign: 'center', color: '#94a3b8' }}>Loading...</div>;
@@ -92,6 +117,19 @@ export default function PurchaseOrderDetailPage() {
           style={{ width: '100%', minHeight: '52px', marginTop: '20px', borderRadius: '14px', backgroundColor: '#f97316', color: '#fff', border: 'none', fontSize: '16px', fontWeight: 700, cursor: 'pointer', boxShadow: '0 4px 12px rgba(249,115,22,0.3)' }}>
           Receive Stock Against This PO
         </button>
+      )}
+
+      {/* Cancel PO (FR-5.8) */}
+      {['DRAFT', 'OPEN', 'PARTIAL'].includes(po.status) && (
+        <button onClick={handleCancel} disabled={cancelling}
+          style={{ width: '100%', minHeight: '48px', marginTop: '12px', borderRadius: '14px', backgroundColor: '#fff', color: '#dc2626', border: '1px solid #fecaca', fontSize: '14px', fontWeight: 700, cursor: cancelling ? 'default' : 'pointer', opacity: cancelling ? 0.6 : 1 }}>
+          {cancelling ? 'Cancelling…' : 'Cancel Purchase Order'}
+        </button>
+      )}
+      {cancelError && (
+        <div style={{ marginTop: '12px', padding: '12px 16px', borderRadius: '10px', backgroundColor: '#fef2f2', color: '#dc2626', fontSize: '14px' }}>
+          {cancelError}
+        </div>
       )}
     </div>
   );

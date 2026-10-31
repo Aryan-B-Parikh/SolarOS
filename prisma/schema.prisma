@@ -28,6 +28,8 @@ model User {
   password_hash  String
   role           UserRole
   is_active      Boolean     @default(true)
+  failed_login_count Int     @default(0)
+  locked_until       DateTime? @db.Timestamptz()
   last_login_at  DateTime?   @db.Timestamptz()
   created_at     DateTime    @default(now()) @db.Timestamptz()
   updated_at     DateTime    @updatedAt @db.Timestamptz()
@@ -675,6 +677,8 @@ enum PaymentMethod {
   CASH
   CHEQUE
   LOAN
+  CARD
+  NET_BANKING
 }
 
 enum PaymentKind {

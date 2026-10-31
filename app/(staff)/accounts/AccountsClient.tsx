@@ -1,16 +1,57 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { 
   CreditCard, FileText, Receipt, Users, Plus, 
-  X, Check, AlertTriangle, ShieldCheck, Download 
+  X, Check, AlertTriangle, ShieldCheck, Download, Loader2 
 } from 'lucide-react';
 import { StageChip } from '@/components/StageChip';
 import { MoneyText } from '@/components/MoneyText';
 import { formatDateIST } from '@/lib/dates';
 import clsx from 'clsx';
+
+/** Row from GET /api/v1/analytics/technician-pay (FR-8.5 / A9). */
+interface TechnicianPayRow {
+  technicianId: string;
+  technicianName: string;
+  technicianPhone: string;
+  totalLoggedHours: number;
+  hourlyCostPaise: string;
+  totalPayablePaise: string;
+  jobCount: number;
+}
+
+/** Row from GET /api/v1/analytics/subsidy-summary (FR-4.8 / C11). */
+interface SubsidyRow {
+  subsidyId: string;
+  orderId: string;
+  orderNumber: string;
+  customerName: string;
+  capacityKw: number;
+  status:
+    | 'NOT_STARTED'
+    | 'SUBMITTED'
+    | 'UNDER_INSPECTION'
+    | 'APPROVED'
+    | 'DISBURSED'
+    | 'REJECTED';
+  applicationRef: string | null;
+  expectedPaise: string;
+  receivedPaise: string;
+  submittedOn: string | null;
+  disbursedOn: string | null;
+}
+
+const SUBSIDY_STATUS_STYLES: Record<SubsidyRow['status'], string> = {
+  NOT_STARTED: 'bg-slate-100 text-slate-700 border-slate-200',
+  SUBMITTED: 'bg-blue-50 text-blue-800 border-blue-200',
+  UNDER_INSPECTION: 'bg-amber-50 text-amber-800 border-amber-200',
+  APPROVED: 'bg-emerald-50 text-emerald-800 border-emerald-200',
+  DISBURSED: 'bg-emerald-100 text-emerald-900 border-emerald-300 font-bold',
+  REJECTED: 'bg-red-50 text-red-800 border-red-200',
+};
 
 interface AccountsClientProps {
   payments: any[];
@@ -32,6 +73,71 @@ export default function AccountsClient({
   const [isExpenseModalOpen, setIsExpenseModalOpen] = useState(false);
   const [loading, setLoading] = useState(false);
 
+  // Real payroll data (FR-8.5): fetched from the technician-pay analytics
+  // endpoint - no client-side recomputation or default hourly rates.
+  const [payroll, setPayroll] = useState<TechnicianPayRow[] | null>(null);
+  const [payrollLoading, setPayrollLoading] = useState(false);
+  const [payrollError, setPayrollError] = useState<string | null>(null);
+
+  // Real subsidy applications (C11 / FR-4.8).
+  const [subsidies, setSubsidies] = useState<SubsidyRow[] | null>(null);
+  const [subsidyLoading, setSubsidyLoading] = useState(false);
+  const [subsidyError, setSubsidyError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (activeTab !== 'PAYROLL' || payroll !== null || payrollLoading) return;
+    let cancelled = false;
+    setPayrollLoading(true);
+    setPayrollError(null);
+    fetch('/api/v1/analytics/technician-pay?period=THIS_MONTH', { credentials: 'same-origin' })
+      .then(async (res) => {
+        if (!res.ok) {
+          const err = await res.json().catch(() => null);
+          throw new Error(err?.error?.message || 'Failed to load technician pay summary');
+        }
+        return res.json();
+      })
+      .then((data: TechnicianPayRow[]) => {
+        if (!cancelled) setPayroll(data);
+      })
+      .catch((err: Error) => {
+        if (!cancelled) setPayrollError(err.message || 'Failed to load technician pay summary');
+      })
+      .finally(() => {
+        if (!cancelled) setPayrollLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTab, payroll, payrollLoading]);
+
+  useEffect(() => {
+    if (activeTab !== 'SUBSIDY' || subsidies !== null || subsidyLoading) return;
+    let cancelled = false;
+    setSubsidyLoading(true);
+    setSubsidyError(null);
+    fetch('/api/v1/analytics/subsidy-summary', { credentials: 'same-origin' })
+      .then(async (res) => {
+        if (!res.ok) {
+          const err = await res.json().catch(() => null);
+          throw new Error(err?.error?.message || 'Failed to load subsidy applications');
+        }
+        return res.json();
+      })
+      .then((data: { subsidies: SubsidyRow[] }) => {
+        if (!cancelled) setSubsidies(data.subsidies);
+      })
+      .catch((err: Error) => {
+        if (!cancelled) setSubsidyError(err.message || 'Failed to load subsidy applications');
+      })
+      .finally(() => {
+        if (!cancelled) setSubsidyLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTab, subsidies, subsidyLoading]);
+
   // Expense form state
   const [expenseForm, setExpenseForm] = useState({
     category: 'MATERIALS',
@@ -49,7 +155,6 @@ export default function AccountsClient({
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'x-user-role': 'ACCOUNTS',
         },
         body: JSON.stringify({
           category: expenseForm.category,
@@ -260,62 +365,65 @@ export default function AccountsClient({
         </div>
       )}
 
-      {/* Tab Content: Technician Pay Summary (FR-8.5 / A9) */}
+      {/* Tab Content: Technician Pay Summary (FR-8.5 / A9) - real logged hours */}
       {activeTab === 'PAYROLL' && (
         <div className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-xs">
           <div className="p-4 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
             <div>
-              <h3 className="font-bold text-xs uppercase text-slate-700">Monthly Technician Hours & Compensation</h3>
-              <p className="text-[11px] text-slate-500">Payable = Total Logged Hours × Hourly Cost Rate (Assumption A9)</p>
+              <h3 className="font-bold text-xs uppercase text-slate-700">Monthly Technician Hours &amp; Compensation</h3>
+              <p className="text-[11px] text-slate-500">Payable = Logged Hours (time logs) &times; Hourly Cost Rate (Assumption A9)</p>
             </div>
             <span className="text-xs font-semibold text-slate-500">Period: Current Month (IST)</span>
           </div>
-          <table className="w-full text-left text-xs border-collapse">
-            <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 font-semibold uppercase">
-              <tr>
-                <th className="px-4 py-3">Technician</th>
-                <th className="px-4 py-3">Role / Skills</th>
-                <th className="px-4 py-3 text-right">Hourly Rate</th>
-                <th className="px-4 py-3 text-right">Logged Hours</th>
-                <th className="px-4 py-3 text-right">Total Payable</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100 text-slate-700">
-              {technicians.map((t) => {
-                // Compute hours from time_logs
-                const hours = (t.time_logs || []).reduce((acc: number, log: any) => {
-                  if (log.started_at && log.ended_at) {
-                    const diffHours = (new Date(log.ended_at).getTime() - new Date(log.started_at).getTime()) / (1000 * 60 * 60);
-                    return acc + diffHours;
-                  }
-                  return acc + 6; // default 6h if completed
-                }, 0);
-
-                const hourlyPaise = BigInt(t.hourly_cost_paise || 25000); // default Rs 250/hr
-                const totalPayablePaise = BigInt(Math.round(hours * Number(hourlyPaise)));
-
-                return (
-                  <tr key={t.user_id} className="hover:bg-slate-50">
-                    <td className="px-4 py-3 font-semibold text-slate-900">{t.user?.name}</td>
-                    <td className="px-4 py-3 text-slate-500">
-                      {t.is_crew_lead ? 'Crew Lead' : 'Technician'} • {t.skills?.join(', ') || 'Standard'}
-                    </td>
-                    <td className="px-4 py-3 text-right">
-                      <MoneyText paise={hourlyPaise} /> / hr
-                    </td>
-                    <td className="px-4 py-3 text-right font-medium">{hours.toFixed(1)} hrs</td>
-                    <td className="px-4 py-3 text-right font-bold text-slate-900">
-                      <MoneyText paise={totalPayablePaise} />
+          {payrollError && (
+            <p className="p-4 text-xs text-red-700 bg-red-50 border-b border-red-100">{payrollError}</p>
+          )}
+          {payrollLoading ? (
+            <p className="py-10 text-center text-xs text-slate-400 flex items-center justify-center gap-2">
+              <Loader2 className="w-4 h-4 animate-spin" /> Loading technician pay from analytics&hellip;
+            </p>
+          ) : (
+            <table className="w-full text-left text-xs border-collapse">
+              <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 font-semibold uppercase">
+                <tr>
+                  <th className="px-4 py-3">Technician</th>
+                  <th className="px-4 py-3">Contact</th>
+                  <th className="px-4 py-3 text-right">Hourly Rate</th>
+                  <th className="px-4 py-3 text-right">Logged Hours</th>
+                  <th className="px-4 py-3 text-right">Jobs</th>
+                  <th className="px-4 py-3 text-right">Total Payable</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 text-slate-700">
+                {!payroll || payroll.length === 0 ? (
+                  <tr>
+                    <td colSpan={6} className="py-8 text-center text-slate-400">
+                      No completed time logs this month. Payroll appears once technicians clock out of installations.
                     </td>
                   </tr>
-                );
-              })}
-            </tbody>
-          </table>
+                ) : (
+                  payroll.map((t) => (
+                    <tr key={t.technicianId} className="hover:bg-slate-50">
+                      <td className="px-4 py-3 font-semibold text-slate-900">{t.technicianName}</td>
+                      <td className="px-4 py-3 text-slate-500">{t.technicianPhone || '\u2014'}</td>
+                      <td className="px-4 py-3 text-right">
+                        <MoneyText paise={BigInt(t.hourlyCostPaise)} /> / hr
+                      </td>
+                      <td className="px-4 py-3 text-right font-medium">{t.totalLoggedHours.toFixed(1)} hrs</td>
+                      <td className="px-4 py-3 text-right text-slate-500">{t.jobCount}</td>
+                      <td className="px-4 py-3 text-right font-bold text-slate-900">
+                        <MoneyText paise={BigInt(t.totalPayablePaise)} />
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          )}
         </div>
       )}
 
-      {/* Tab Content: Subsidy Tracking (FR-4.8) */}
+      {/* Tab Content: Subsidy Tracking (FR-4.8 / C11) - real applications */}
       {activeTab === 'SUBSIDY' && (
         <div className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-xs">
           <table className="w-full text-left text-xs border-collapse">
@@ -326,28 +434,59 @@ export default function AccountsClient({
                 <th className="px-4 py-3">Capacity</th>
                 <th className="px-4 py-3">Subsidy Stage</th>
                 <th className="px-4 py-3">National Portal App No</th>
-                <th className="px-4 py-3 text-right">Sanctioned Amount</th>
+                <th className="px-4 py-3 text-right">Expected Amount</th>
+                <th className="px-4 py-3 text-right">Received</th>
+                <th className="px-4 py-3">Disbursed On</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 text-slate-700">
-              {orders.map((o) => (
-                <tr key={o.id} className="hover:bg-slate-50">
-                  <td className="px-4 py-3 font-mono font-bold text-blue-600">
-                    <Link href={`/orders/${o.id}`}>{o.order_number}</Link>
-                  </td>
-                  <td className="px-4 py-3 font-medium text-slate-900">{o.customer?.name}</td>
-                  <td className="px-4 py-3 font-semibold">{o.capacity_kw} kW</td>
-                  <td className="px-4 py-3">
-                    <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-50 text-emerald-800 border border-emerald-200">
-                      Active
+              {subsidyError ? (
+                <tr>
+                  <td colSpan={8} className="py-6 text-center text-red-600 text-xs">{subsidyError}</td>
+                </tr>
+              ) : subsidyLoading ? (
+                <tr>
+                  <td colSpan={8} className="py-8 text-center text-slate-400 text-xs">
+                    <span className="inline-flex items-center gap-2">
+                      <Loader2 className="w-4 h-4 animate-spin" /> Loading subsidy applications&hellip;
                     </span>
                   </td>
-                  <td className="px-4 py-3 font-mono text-slate-600">PM-SG-2026-981</td>
-                  <td className="px-4 py-3 text-right font-bold text-emerald-700">
-                    Rs 78,000
+                </tr>
+              ) : !subsidies || subsidies.length === 0 ? (
+                <tr>
+                  <td colSpan={8} className="py-8 text-center text-slate-400">
+                    No subsidy applications recorded yet. Track PM Surya Ghar filings from an order&apos;s Subsidy tab.
                   </td>
                 </tr>
-              ))}
+              ) : (
+                subsidies.map((s) => (
+                  <tr key={s.subsidyId} className="hover:bg-slate-50">
+                    <td className="px-4 py-3 font-mono font-bold text-blue-600">
+                      <Link href={`/orders/${s.orderId}`}>{s.orderNumber}</Link>
+                    </td>
+                    <td className="px-4 py-3 font-medium text-slate-900">{s.customerName}</td>
+                    <td className="px-4 py-3 font-semibold">{s.capacityKw} kW</td>
+                    <td className="px-4 py-3">
+                      <span
+                        className={clsx(
+                          'px-2 py-0.5 rounded text-[10px] font-semibold border',
+                          SUBSIDY_STATUS_STYLES[s.status]
+                        )}
+                      >
+                        {s.status.replace(/_/g, ' ')}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 font-mono text-slate-600">{s.applicationRef || '\u2014'}</td>
+                    <td className="px-4 py-3 text-right font-bold text-slate-900">
+                      <MoneyText paise={BigInt(s.expectedPaise)} />
+                    </td>
+                    <td className="px-4 py-3 text-right text-emerald-700 font-medium">
+                      <MoneyText paise={BigInt(s.receivedPaise)} />
+                    </td>
+                    <td className="px-4 py-3 text-slate-500">{s.disbursedOn ? formatDateIST(s.disbursedOn) : '\u2014'}</td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
         </div>

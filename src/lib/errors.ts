@@ -39,6 +39,8 @@ export type ErrorCode =
   | 'INVALID_STATE'
   | 'INVALID_REOPEN_STATE'
   | 'TRANSITION_REJECTED'
+  | 'UPSTREAM_ERROR'
+  | 'ACCOUNT_LOCKED'
   | 'INTERNAL_SERVER_ERROR';
 
 export class AppError extends Error {

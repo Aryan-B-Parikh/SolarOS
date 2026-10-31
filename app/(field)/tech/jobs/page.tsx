@@ -1,6 +1,8 @@
 import React from 'react';
 import Link from 'next/link';
 import { prisma } from '@/lib/db';
+import { getSessionUser } from '@/lib/session';
+import { buildMapUrl } from '@/lib/map';
 import {
   Wrench,
   Calendar,
@@ -17,7 +19,18 @@ import { OfflineBanner } from '@/components/OfflineBanner';
 export const dynamic = 'force-dynamic';
 
 export default async function TechJobsPage() {
+  const user = await getSessionUser();
+  const isTech = user?.role === 'TECHNICIAN';
+
   const installations = await prisma.installation.findMany({
+    where: isTech
+      ? {
+          OR: [
+            { crew_lead_id: user!.id },
+            { crew: { some: { technician_id: user!.id } } },
+          ],
+        }
+      : {},
     include: {
       order: {
         include: {
@@ -25,9 +38,7 @@ export default async function TechJobsPage() {
         },
       },
       crew_lead: {
-        include: {
-          user: true,
-        },
+        select: { id: true, name: true, phone: true },
       },
     },
     orderBy: { scheduled_on: 'desc' },
@@ -89,8 +100,17 @@ export default async function TechJobsPage() {
                 <div className="space-y-1 text-xs text-slate-600">
                   <div className="flex items-center gap-1.5">
                     <MapPin className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                    <span>{customer?.address_line1}, {customer?.city}</span>
+                    <span className="flex-1">{customer?.address}, {customer?.city}</span>
                   </div>
+                  <a
+                    href={buildMapUrl(customer?.address, customer?.city, customer?.pincode)}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1.5 text-orange-600 font-semibold hover:underline"
+                  >
+                    <MapPin className="w-3.5 h-3.5" />
+                    <span>Open in Maps</span>
+                  </a>
                   {customer?.phone && (
                     <div className="flex items-center gap-1.5">
                       <Phone className="w-3.5 h-3.5 text-slate-400 shrink-0" />

@@ -9,7 +9,9 @@
  * live in ./FieldShell.tsx, which is a client component.
  */
 import type { Metadata, Viewport } from 'next';
+import { redirect } from 'next/navigation';
 import FieldShell from './FieldShell';
+import { getSessionUser } from '@/lib/session';
 
 export const metadata: Metadata = {
   title: 'SunPower Field',
@@ -30,6 +32,11 @@ export const viewport: Viewport = {
   themeColor: '#f97316',
 };
 
-export default function FieldLayout({ children }: { children: React.ReactNode }) {
+export default async function FieldLayout({ children }: { children: React.ReactNode }) {
+  // Field app requires a signed-in technician (session cookie, D13)
+  const user = await getSessionUser();
+  if (!user) {
+    redirect('/login');
+  }
   return <FieldShell>{children}</FieldShell>;
 }

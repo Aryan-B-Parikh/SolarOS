@@ -1,11 +1,22 @@
 import { NextResponse } from 'next/server';
+import { z } from 'zod';
 import { createApiHandler } from '@/lib/handler';
-import { ExcludeWarrantySchema } from '@/contracts';
 import { excludeTicketWarranty } from '@/services/tickets';
+
+/**
+ * FR-7.7 — warranty exclusion now REQUIRES photo evidence.
+ * Local schema (supersedes the shared ExcludeWarrantySchema, which cannot be
+ * modified): reason + photoAttachmentId referencing an attachment uploaded via
+ * POST /api/v1/uploads with entityType TICKET and entityId = ticket id.
+ */
+const ExcludeWarrantyWithEvidenceSchema = z.object({
+  reason: z.string().min(3, 'Exclusion reason is required'),
+  photoAttachmentId: z.string().uuid('Photo evidence attachment (UUID) is required'),
+});
 
 export const POST = createApiHandler(
   {
-    bodySchema: ExcludeWarrantySchema,
+    bodySchema: ExcludeWarrantyWithEvidenceSchema,
     allowedRoles: ['DIRECTOR'],
   },
   async ({ req, body, user }) => {
@@ -17,4 +28,3 @@ export const POST = createApiHandler(
     return NextResponse.json(result);
   }
 );
-

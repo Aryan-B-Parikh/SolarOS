@@ -9,6 +9,7 @@ import { AppError } from '../lib/errors.ts';
 import { recordAudit } from '../lib/audit.ts';
 import { generateAccessToken } from '../lib/access-links.ts';
 import { calculateWarrantyPeriod } from '../domain/warranty.ts';
+import { queueNotification } from '../lib/outbox.ts';
 import crypto from 'node:crypto';
 import {
   InstallationStatus,
@@ -78,11 +79,15 @@ export async function getInstallation(id: string) {
       order: {
         include: {
           customer: true,
-          lead: {
+          lines: {
+            include: { product: true },
+          },
+          quote: {
             include: {
-              surveys: {
-                where: { status: 'APPROVED' },
-                take: 1,
+              lead: {
+                include: {
+                  survey: true, // 1:1 with Lead
+                },
               },
             },
           },
@@ -104,9 +109,6 @@ export async function getInstallation(id: string) {
       time_logs: {
         orderBy: { started_at: 'asc' },
       },
-      inventory_units: {
-        include: { product: true },
-      },
       warranties: true,
     },
   });
@@ -124,13 +126,24 @@ export async function getInstallation(id: string) {
     orderBy: { created_at: 'asc' },
   });
 
+  // Serialized units linked to this installation or to the underlying order
+  // (units are bound to the installation at sign-off; before that they carry
+  // the order id from dispatch - both must be visible to the field stepper)
+  const units = await prisma.inventoryUnit.findMany({
+    where: {
+      OR: [{ installation_id: inst.id }, { order_id: inst.order_id }],
+    },
+    include: { product: true },
+  });
+
   // Fetch survey photo attachments (Before photos)
-  const surveyId = inst.order.lead?.surveys[0]?.id;
-  const beforePhotos = surveyId
+  const approvedSurveyId =
+    inst.order.quote?.lead?.survey?.status === 'APPROVED' ? inst.order.quote.lead.survey.id : null;
+  const beforePhotos = approvedSurveyId
     ? await prisma.attachment.findMany({
         where: {
           owner_type: AttachmentOwnerType.SURVEY,
-          owner_id: surveyId,
+          owner_id: approvedSurveyId,
         },
         orderBy: { created_at: 'asc' },
       })
@@ -142,7 +155,7 @@ export async function getInstallation(id: string) {
     orderNumber: inst.order.order_number,
     customerName: inst.order.customer.name,
     customerPhone: inst.order.customer.phone,
-    address: `${inst.order.customer.address_line1}, ${inst.order.customer.city}`,
+    address: `${inst.order.customer.address}, ${inst.order.customer.city}`,
     status: inst.status,
     scheduledOn: inst.scheduled_on.toISOString().split('T')[0],
     slot: inst.slot,
@@ -176,10 +189,22 @@ export async function getInstallation(id: string) {
         kind: p.kind,
       })),
     },
-    units: inst.inventory_units.map((u) => ({
+    // Certificates are numbered after the order they commission (deterministic)
+    certificateNumber: `${inst.order.order_number}-CERT`,
+    orderCapacityKw: Number(inst.order.capacity_kw),
+    systemType: inst.order.system_type,
+    lines: inst.order.lines.map((l) => ({
+      productId: l.product_id,
+      productName: l.product.name,
+      productSku: l.product.sku,
+      qty: Number(l.qty),
+    })),
+    units: units.map((u) => ({
       id: u.id,
       serialNumber: u.serial_number,
+      productId: u.product_id,
       productName: u.product.name,
+      productSku: u.product.sku,
       status: u.status,
     })),
     warranties: inst.warranties.map((w) => ({
@@ -245,7 +270,7 @@ export async function startInstallation(input: StartInstallationInput) {
           installation_id: inst.id,
           started_at: now,
           ended_at: now, // Will be updated on sign-off
-          hourly_cost_paise: tech.hourly_rate_paise || 50000n,
+          hourly_cost_paise: tech.hourly_cost_paise || 50000n,
         },
       });
     }
@@ -695,6 +720,41 @@ export async function signOffInstallation(input: SignOffInput) {
       },
       tx
     );
+
+    // 11. Queue completion notification to the customer (AUTO-10).
+    // The certificate link embeds the customer's own CERTIFICATE access token,
+    // which is issued precisely to be shared with them (D11 / 90-day validity).
+    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || process.env.APP_BASE_URL || '';
+    const certificatePath = `/certificate/${certToken.rawToken}`;
+    const certificateUrl = baseUrl ? `${baseUrl}${certificatePath}` : certificatePath;
+    const completionMessage =
+      `Dear ${inst.order.customer.name}, your rooftop solar installation (order ${inst.order.order_number}) ` +
+      `has been commissioned and signed off. Your commissioning certificate is available at ${certificateUrl}. ` +
+      `Equipment and workmanship warranties are now active.`;
+
+    // Email the certificate link when we have an address; otherwise fall back
+    // to SMS so phone-only customers are still notified.
+    if (inst.order.customer.email || inst.order.customer.phone) {
+      await queueNotification(
+        {
+          channel: inst.order.customer.email ? 'EMAIL' : 'SMS',
+          recipient: (inst.order.customer.email || inst.order.customer.phone)!,
+          template: 'INSTALLATION_COMPLETED',
+          payload: {
+            customerName: inst.order.customer.name,
+            orderNumber: inst.order.order_number,
+            certificateUrl,
+            certificatePath,
+            subject: `Your solar installation is complete - Order ${inst.order.order_number}`,
+            body: completionMessage,
+            message: completionMessage,
+          },
+          // Idempotent per installation: retries/replays never double-send
+          idempotencyKey: `installation-completed:${inst.id}`,
+        },
+        tx
+      );
+    }
 
     return {
       installationId: updatedInst.id,

@@ -42,14 +42,14 @@ export default function HomePage() {
           </Link>
 
           <Link
-            href="/login"
-            className="p-5 rounded-xl border border-slate-800 bg-slate-900/60 hover:border-amber-500/50 hover:bg-slate-800 transition block group"
+            href="/dashboard"
+            className="p-5 rounded-xl border border-slate-800 bg-slate-900/60 hover:border-blue-500/50 hover:bg-slate-800 transition block group"
           >
-            <div className="font-semibold text-amber-400 group-hover:text-amber-300 flex items-center justify-between">
-              Staff Sign In & Portal <ArrowRight className="w-4 h-4" />
+            <div className="font-semibold text-blue-400 group-hover:text-blue-300 flex items-center justify-between">
+              Staff Portal <ArrowRight className="w-4 h-4" />
             </div>
             <p className="text-xs text-slate-400 mt-2">
-              Role-based access for Director, Sales, Warehouse, Techs, Support & Accounts.
+              Role-based management for Director, Sales, Warehouse, Techs, Support & Accounts.
             </p>
           </Link>
         </div>

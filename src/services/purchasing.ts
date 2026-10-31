@@ -2,6 +2,7 @@ import { prisma } from '@/lib/db';
 import { AppError } from '@/lib/errors';
 import { recordAudit } from '@/lib/audit';
 import { POStatus, MovementType, UnitStatus } from '@prisma/client';
+import { notifyLowStock } from './inventory';
 import { randomBytes } from 'crypto';
 
 export async function listSuppliers() {
@@ -236,6 +237,7 @@ export async function receiveGoods(input: ReceiveGoodsInput) {
     }
 
     // 2. Validate products & serial numbers
+    const productCache = new Map<string, { name: string; isSerialized: boolean }>();
     for (const line of input.lines) {
       if (line.qty <= 0) {
         throw new AppError('VALIDATION_FAILED', 'Receipt quantity must be greater than zero', 400);
@@ -247,6 +249,7 @@ export async function receiveGoods(input: ReceiveGoodsInput) {
       if (!product) {
         throw new AppError('NOT_FOUND', `Product not found: ${line.productId}`, 404);
       }
+      productCache.set(product.id, { name: product.name, isSerialized: product.is_serialized });
 
       if (product.is_serialized) {
         if (!line.serialNumbers || line.serialNumbers.length !== line.qty) {
@@ -310,7 +313,13 @@ export async function receiveGoods(input: ReceiveGoodsInput) {
       },
     });
 
-    const createdUnits: Array<{ id: string; serialNumber: string; qrCode: string }> = [];
+    const createdUnits: Array<{
+      id: string;
+      productId: string;
+      productName: string;
+      serialNumber: string;
+      qrCode: string;
+    }> = [];
 
     // 5. Process each line: lines, units, stock levels & weighted average cost, movements
     for (const line of input.lines) {
@@ -354,6 +363,8 @@ export async function receiveGoods(input: ReceiveGoodsInput) {
 
           createdUnits.push({
             id: unit.id,
+            productId: unit.product_id,
+            productName: productCache.get(unit.product_id)?.name ?? '',
             serialNumber: unit.serial_number,
             qrCode: unit.qr_code,
           });
@@ -481,5 +492,217 @@ export async function receiveGoods(input: ReceiveGoodsInput) {
       totalPaise: Number(totalPaise),
       units: createdUnits,
     };
+  }).then((result) => {
+    // Fire-and-forget low-stock evaluation for every received product after
+    // the receipt commits (FR-5.3). Alerting issues never fail the receipt.
+    for (const productId of new Set(input.lines.map((l) => l.productId))) {
+      notifyLowStock(productId, actorId).catch(() => {});
+    }
+    return result;
   });
+}
+
+/**
+ * Cancels a purchase order (FR-5.8). Only DRAFT / OPEN / PARTIAL orders can
+ * be cancelled; received goods are unaffected (the ledger is append-only) and
+ * already-received quantities simply remain in stock.
+ */
+export async function cancelPurchaseOrder(poId: string, reason: string, actorId?: string) {
+  if (!reason || !reason.trim()) {
+    throw new AppError('VALIDATION_FAILED', 'A cancellation reason is required', 422);
+  }
+
+  let cancellerId = actorId;
+  if (!cancellerId) {
+    const defaultUser = await prisma.user.findFirst();
+    if (defaultUser) cancellerId = defaultUser.id;
+  }
+  if (!cancellerId) {
+    throw new AppError('UNAUTHENTICATED', 'User not authenticated', 401);
+  }
+
+  return prisma.$transaction(async (tx) => {
+    const po = await tx.purchaseOrder.findUnique({
+      where: { id: poId },
+      include: { lines: true, supplier: true },
+    });
+    if (!po) {
+      throw new AppError('NOT_FOUND', 'Purchase order not found', 404);
+    }
+
+    const cancellableStatuses: POStatus[] = [POStatus.DRAFT, POStatus.OPEN, POStatus.PARTIAL];
+    if (!cancellableStatuses.includes(po.status)) {
+      throw new AppError(
+        'INVALID_STATE',
+        `Purchase order in ${po.status} status cannot be cancelled`,
+        409
+      );
+    }
+
+    const cancelled = await tx.purchaseOrder.update({
+      where: { id: po.id },
+      data: { status: POStatus.CANCELLED },
+    });
+
+    await recordAudit(
+      {
+        actorType: 'USER',
+        actorId: cancellerId!,
+        entityType: 'PURCHASE_ORDER',
+        entityId: po.id,
+        action: 'PO_CANCELLED',
+        before: { status: po.status },
+        after: {
+          status: POStatus.CANCELLED,
+          poNumber: po.po_number,
+          reason: reason.trim(),
+          receivedLines: po.lines.filter((l) => Number(l.qty_received) > 0).length,
+        },
+      },
+      tx
+    );
+
+    return {
+      id: cancelled.id,
+      poNumber: cancelled.po_number,
+      status: cancelled.status,
+    };
+  });
+}
+
+/**
+ * Creates a DRAFT purchase order restocking the given low-stock products
+ * (FR-5.8 / FR-5.3). Line quantity heuristic: reorder_level * 2 - available
+ * (at least 1); unit cost = product standard cost.
+ *
+ * Supplier: the Product model has no default-supplier field, so the first
+ * active supplier (alphabetical) is attached — the PO is a DRAFT explicitly
+ * meant to be reviewed and edited before opening.
+ */
+export async function createDraftPOForLowStock(productIds: string[], actorId?: string) {
+  if (!productIds || productIds.length === 0) {
+    throw new AppError('VALIDATION_FAILED', 'At least one product id is required', 400);
+  }
+
+  let creatorId = actorId;
+  if (!creatorId) {
+    const user = await prisma.user.findFirst();
+    if (user) creatorId = user.id;
+  }
+  if (!creatorId) {
+    throw new AppError('UNAUTHENTICATED', 'User not authenticated', 401);
+  }
+
+  const products = await prisma.product.findMany({
+    where: { id: { in: productIds }, is_active: true },
+  });
+  if (products.length === 0) {
+    throw new AppError('NOT_FOUND', 'No active products found for the given ids', 404);
+  }
+
+  const supplier = await prisma.supplier.findFirst({
+    where: { is_active: true },
+    orderBy: { name: 'asc' },
+  });
+  if (!supplier) {
+    throw new AppError(
+      'CONFLICT',
+      'No active supplier exists. Create a supplier before generating draft purchase orders.',
+      409
+    );
+  }
+
+  // Availability per product across all locations
+  const levels = await prisma.stockLevel.findMany({
+    where: { product_id: { in: products.map((p) => p.id) } },
+    select: { product_id: true, on_hand: true, reserved: true },
+  });
+  const availability = new Map<string, number>();
+  for (const level of levels) {
+    const current = availability.get(level.product_id) ?? 0;
+    availability.set(level.product_id, current + Number(level.on_hand) - Number(level.reserved));
+  }
+
+  const lines = products
+    .map((product) => {
+      const available = availability.get(product.id) ?? 0;
+      const reorderLevel = Number(product.reorder_level);
+      const qty = Math.max(1, Math.ceil(reorderLevel * 2 - available));
+      return {
+        productId: product.id,
+        productName: product.name,
+        sku: product.sku,
+        qtyOrdered: qty,
+        unitCostPaise: Number(product.std_cost_paise),
+        available,
+        reorderLevel,
+      };
+    })
+    .filter((l) => l.qtyOrdered > 0);
+
+  if (lines.length === 0) {
+    throw new AppError('CONFLICT', 'All selected products are already above their reorder level', 409);
+  }
+
+  const totalPaise = lines.reduce((sum, l) => sum + Math.round(l.qtyOrdered * l.unitCostPaise), 0);
+
+  const now = new Date();
+  const year = now.getFullYear();
+  const count = await prisma.purchaseOrder.count();
+  const poNumber = `PO-${year}-${String(count + 1).padStart(4, '0')}`;
+
+  const po = await prisma.$transaction(async (tx) => {
+    const created = await tx.purchaseOrder.create({
+      data: {
+        po_number: poNumber,
+        supplier_id: supplier.id,
+        status: POStatus.DRAFT,
+        ordered_on: now,
+        expected_on: null,
+        total_paise: BigInt(totalPaise),
+        created_by: creatorId!,
+        lines: {
+          create: lines.map((l) => ({
+            product_id: l.productId,
+            qty_ordered: l.qtyOrdered,
+            unit_cost_paise: BigInt(l.unitCostPaise),
+          })),
+        },
+      },
+      include: { lines: true },
+    });
+
+    await recordAudit(
+      {
+        actorType: 'USER',
+        actorId: creatorId!,
+        entityType: 'PURCHASE_ORDER',
+        entityId: created.id,
+        action: 'PO_DRAFT_CREATED_FOR_LOW_STOCK',
+        after: {
+          poNumber,
+          supplierName: supplier.name,
+          lines: lines.map((l) => ({
+            sku: l.sku,
+            qtyOrdered: l.qtyOrdered,
+            available: l.available,
+            reorderLevel: l.reorderLevel,
+          })),
+          totalPaise,
+        },
+      },
+      tx
+    );
+
+    return created;
+  });
+
+  return {
+    id: po.id,
+    poNumber: po.po_number,
+    status: po.status,
+    supplierName: supplier.name,
+    totalPaise,
+    lines,
+  };
 }

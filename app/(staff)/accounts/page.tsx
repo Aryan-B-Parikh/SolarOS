@@ -9,12 +9,13 @@ import { StageChip } from '@/components/StageChip';
 import { MoneyText } from '@/components/MoneyText';
 import { KpiTile } from '@/components/KpiTile';
 import { formatDateIST } from '@/lib/dates';
+import { getKpiMetrics } from '@/services/analytics';
 import AccountsClient from './AccountsClient';
 
 export const dynamic = 'force-dynamic';
 
 export default async function AccountsPage() {
-  const [payments, invoices, expenses, orders, technicians] = await Promise.all([
+  const [payments, invoices, expenses, orders, technicians, kpiSummary] = await Promise.all([
     prisma.payment.findMany({
       include: {
         order: { include: { customer: true } },
@@ -47,9 +48,9 @@ export default async function AccountsPage() {
     prisma.technician.findMany({
       include: {
         user: { select: { name: true } },
-        time_logs: true,
       },
     }),
+    getKpiMetrics('THIS_MONTH'),
   ]);
 
   // Aggregate metrics
@@ -73,12 +74,12 @@ export default async function AccountsPage() {
         </div>
       </div>
 
-      {/* KPI Tiles */}
+      {/* KPI Tiles - real month-over-month change from the profit engine */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <KpiTile
           label="Total Collections"
           value={<MoneyText paise={totalCollectionsPaise} className="text-emerald-700" />}
-          changePercent={14.2}
+          changePercent={kpiSummary.collections.percentChange}
           changeLabel="vs last month"
         />
         <KpiTile

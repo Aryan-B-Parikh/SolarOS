@@ -1,5 +1,5 @@
 import React from 'react';
-import { getProjectProfitabilityList, getKpiMetrics } from '@/services/analytics';
+import { getProjectProfitabilityList, getKpiMetrics, getRevenueTrend } from '@/services/analytics';
 import Link from 'next/link';
 import { 
   BarChart3, TrendingUp, TrendingDown, DollarSign, 
@@ -7,15 +7,22 @@ import {
 } from 'lucide-react';
 import { MoneyText } from '@/components/MoneyText';
 import { KpiTile } from '@/components/KpiTile';
-import { formatDateIST } from '@/lib/dates';
+import { TrendChart } from '@/components/TrendChart';
 import clsx from 'clsx';
 
 export const dynamic = 'force-dynamic';
 
+/** Formats the margin delta in basis points, e.g. "+120 bp" or "-45 bp". */
+function kpisDeltaLabel(kpis: Awaited<ReturnType<typeof getKpiMetrics>>): string {
+  const deltaBp = kpis.margin.deltaBp;
+  return `${deltaBp >= 0 ? '+' : ''}${deltaBp} bp`;
+}
+
 export default async function AnalyticsPage() {
-  const [projectProfits, kpiSummary] = await Promise.all([
+  const [projectProfits, kpiSummary, revenueTrend] = await Promise.all([
     getProjectProfitabilityList(),
     getKpiMetrics('THIS_MONTH'),
+    getRevenueTrend(6),
   ]);
 
   const totalRevenue = BigInt(kpiSummary.revenue.valuePaise);
@@ -46,23 +53,59 @@ export default async function AnalyticsPage() {
         </Link>
       </div>
 
-      {/* KPI Tiles */}
+      {/* KPI Tiles - real period-over-period deltas from the profit engine */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <KpiTile
           label="Net Project Revenue"
           value={<MoneyText paise={totalRevenue} className="text-slate-900" />}
-          changePercent={18.4}
+          changePercent={kpiSummary.revenue.percentChange}
+          changeLabel="vs last month"
         />
         <KpiTile
           label="Total Realized Gross Profit"
           value={<MoneyText paise={totalProfit} className="text-blue-700" />}
-          changePercent={22.1}
+          changePercent={kpiSummary.grossProfit.percentChange}
+          changeLabel="vs last month"
         />
         <KpiTile
           label="Blended Gross Margin"
           value={<span className="text-emerald-700">{avgMargin}%</span>}
-          helpText="Target benchmark: 20.0%"
+          helpText={`Prior period: ${kpiSummary.margin.priorMarginPercent} (${kpisDeltaLabel(kpiSummary)})`}
         />
+      </div>
+
+      {/* Revenue Trend Chart (FR-8.9) - real v_revenue_trend data */}
+      <div className="p-5 rounded-xl border border-slate-200 bg-white shadow-xs space-y-4">
+        <div className="flex items-center justify-between pb-1">
+          <h2 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+            <TrendingUp className="w-4 h-4 text-blue-600" />
+            <span>Revenue Trend - Last 6 Months (FR-8.9)</span>
+          </h2>
+          <div className="flex items-center gap-4 text-[11px] text-slate-500">
+            <span className="flex items-center gap-1.5">
+              <span className="inline-block w-3 h-0.5 bg-blue-600" /> Net Revenue
+            </span>
+            <span className="flex items-center gap-1.5">
+              <span className="inline-block w-3 h-0.5 bg-emerald-600" /> Gross Profit
+            </span>
+          </div>
+        </div>
+        {revenueTrend.length === 0 ? (
+          <p className="text-xs text-slate-400 py-8 text-center">No revenue data recorded yet.</p>
+        ) : (
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <TrendChart
+              title="Net Revenue"
+              data={revenueTrend.map((m) => ({ label: m.label, valuePaise: m.revenuePaise }))}
+              color="#2563eb"
+            />
+            <TrendChart
+              title="Gross Profit"
+              data={revenueTrend.map((m) => ({ label: m.label, valuePaise: m.grossProfitPaise }))}
+              color="#059669"
+            />
+          </div>
+        )}
       </div>
 
       {/* Top Profit Jobs Table (FR-8.9) */}

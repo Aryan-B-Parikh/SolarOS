@@ -79,6 +79,23 @@ export async function reviewSurvey(
     });
     if (!survey) throw new AppError('NOT_FOUND', 'Survey not found', 404);
 
+    // FR-2.4: only a COMPLETED survey can be reviewed. Reviewing a survey
+    // that is still SCHEDULED (or already APPROVED/REJECTED) is a conflict.
+    if (action === 'APPROVE' && survey.status !== SurveyStatus.COMPLETED) {
+      throw new AppError(
+        'SURVEY_NOT_APPROVED',
+        `Survey cannot be approved while its status is ${survey.status}. The surveyor must submit measurements and photos first.`,
+        422
+      );
+    }
+    if (action === 'REJECT' && survey.status === SurveyStatus.APPROVED) {
+      throw new AppError(
+        'CONFLICT',
+        'Survey is already approved and cannot be rejected. Revise via a new survey booking instead.',
+        409
+      );
+    }
+
     if (action === 'APPROVE') {
       validateTransition('LEAD', survey.lead.status, 'SURVEY_APPROVED');
 
@@ -301,6 +318,20 @@ export async function submitSurvey(
       where: { id: survey.lead_id },
       data: { roof_area_sqm: data.usableAreaSqm },
     });
+
+    // FR-2.4: after submission the lead stays on SURVEY_SCHEDULED with the
+    // survey now COMPLETED, awaiting review. This is the legal state-machine
+    // path that makes the review flow reachable (there is no SURVEY_COMPLETED
+    // lead status - the review card keys off SURVEY_SCHEDULED + survey
+    // status COMPLETED). Normalize QUALIFIED (re-booked survey) back to
+    // SURVEY_SCHEDULED so the review card appears.
+    if (survey.lead.status !== 'SURVEY_SCHEDULED') {
+      validateTransition('LEAD', survey.lead.status, 'SURVEY_SCHEDULED');
+      await tx.lead.update({
+        where: { id: survey.lead_id },
+        data: { status: LeadStatus.SURVEY_SCHEDULED },
+      });
+    }
 
     await tx.leadActivity.create({
       data: {

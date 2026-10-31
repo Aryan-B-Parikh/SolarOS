@@ -88,6 +88,139 @@ export function getISTMonthRange(year: number, month: number): { start: Date; en
   };
 }
 
+/**
+ * Default Indian business window used for SLA maths (FR-1.6):
+ * 09:00-18:00 IST, Monday-Saturday (Sunday closed).
+ */
+export const DEFAULT_BUSINESS_START_HOUR = 9;
+export const DEFAULT_BUSINESS_END_HOUR = 18;
+export const DEFAULT_WORK_DAYS = [1, 2, 3, 4, 5, 6]; // Mon-Sat (0 = Sunday)
+
+/**
+ * First-contact SLA for NEW leads, in business hours (FR-1.6 / AUTO-8).
+ * Kept here (pure module) so services and the node test runner can share it.
+ */
+export const LEAD_SLA_BUSINESS_HOURS = 4;
+
+/**
+ * Adds `hours` of business (working) time to `from`, skipping non-business
+ * hours and closed days (default: 09:00-18:00 IST, Mon-Sat).
+ *
+ * Example: Friday 17:00 IST + 4 business hours => Saturday 12:00 IST
+ * (1h on Friday, Sunday skipped, 3h on Monday would apply if Saturday closed).
+ */
+export function addBusinessHours(
+  from: Date,
+  hours: number,
+  businessStart: number = DEFAULT_BUSINESS_START_HOUR,
+  businessEnd: number = DEFAULT_BUSINESS_END_HOUR,
+  workDays: number[] = DEFAULT_WORK_DAYS
+): Date {
+  if (!Number.isFinite(hours) || hours <= 0) {
+    return new Date(from.getTime());
+  }
+
+  // Work in "IST wall clock" space: shift by +5:30 then use UTC accessors.
+  let ist = new Date(from.getTime() + IST_OFFSET_MS);
+  let remainingMs = Math.round(hours * 3600 * 1000);
+
+  // Safety bound to avoid infinite loops on pathological inputs.
+  const maxIterations = 366 * 24;
+  let iterations = 0;
+
+  while (remainingMs > 0 && iterations++ < maxIterations) {
+    const dow = ist.getUTCDay();
+    const timeOfDayMs =
+      (ist.getUTCHours() * 3600 + ist.getUTCMinutes() * 60 + ist.getUTCSeconds()) * 1000 +
+      ist.getUTCMilliseconds();
+    const openMs = businessStart * 3600 * 1000;
+    const closeMs = businessEnd * 3600 * 1000;
+
+    if (!workDays.includes(dow)) {
+      // Closed day: jump to next midnight IST.
+      ist = new Date(
+        Date.UTC(ist.getUTCFullYear(), ist.getUTCMonth(), ist.getUTCDate() + 1, 0, 0, 0, 0)
+      );
+      continue;
+    }
+
+    if (timeOfDayMs < openMs) {
+      // Before opening: jump to opening time today.
+      ist = new Date(
+        Date.UTC(ist.getUTCFullYear(), ist.getUTCMonth(), ist.getUTCDate(), businessStart, 0, 0, 0)
+      );
+      continue;
+    }
+
+    if (timeOfDayMs >= closeMs) {
+      // After closing: jump to next midnight IST.
+      ist = new Date(
+        Date.UTC(ist.getUTCFullYear(), ist.getUTCMonth(), ist.getUTCDate() + 1, 0, 0, 0, 0)
+      );
+      continue;
+    }
+
+    // Inside the business window: consume as much as possible today.
+    const availableTodayMs = closeMs - timeOfDayMs;
+    if (remainingMs <= availableTodayMs) {
+      ist = new Date(ist.getTime() + remainingMs);
+      remainingMs = 0;
+    } else {
+      remainingMs -= availableTodayMs;
+      ist = new Date(ist.getTime() + availableTodayMs); // == closing time
+    }
+  }
+
+  return new Date(ist.getTime() - IST_OFFSET_MS);
+}
+
+/**
+ * Counts how many business (working) hours have elapsed between `from` and
+ * `now` (default 09:00-18:00 IST, Mon-Sat). Time outside the business window
+ * (nights, Sundays) does not count towards SLA breach maths (FR-1.6).
+ */
+export function businessHoursElapsedSince(
+  from: Date,
+  now: Date = new Date(),
+  businessStart: number = DEFAULT_BUSINESS_START_HOUR,
+  businessEnd: number = DEFAULT_BUSINESS_END_HOUR,
+  workDays: number[] = DEFAULT_WORK_DAYS
+): number {
+  const fromIstMs = from.getTime() + IST_OFFSET_MS;
+  const nowIstMs = now.getTime() + IST_OFFSET_MS;
+  if (!Number.isFinite(fromIstMs) || !Number.isFinite(nowIstMs) || nowIstMs <= fromIstMs) {
+    return 0;
+  }
+
+  let totalMs = 0;
+  const dayMs = 24 * 3600 * 1000;
+  const fromIst = new Date(fromIstMs);
+  // Midnight IST of the `from` calendar day.
+  let dayStartMs = Date.UTC(
+    fromIst.getUTCFullYear(),
+    fromIst.getUTCMonth(),
+    fromIst.getUTCDate()
+  );
+
+  // Safety bound (~2 years of days).
+  let iterations = 0;
+  while (dayStartMs <= nowIstMs && iterations++ < 800) {
+    const dow = new Date(dayStartMs).getUTCDay();
+    if (workDays.includes(dow)) {
+      const openMs = dayStartMs + businessStart * 3600 * 1000;
+      const closeMs = dayStartMs + businessEnd * 3600 * 1000;
+      const overlapStart = Math.max(openMs, fromIstMs);
+      const overlapEnd = Math.min(closeMs, nowIstMs);
+      if (overlapEnd > overlapStart) {
+        totalMs += overlapEnd - overlapStart;
+      }
+    }
+    dayStartMs += dayMs;
+  }
+
+  return totalMs / (3600 * 1000);
+}
+
 export type AnalyticsPeriod = 'TODAY' | 'THIS_WEEK' | 'THIS_MONTH' | 'CUSTOM';
 
 /**

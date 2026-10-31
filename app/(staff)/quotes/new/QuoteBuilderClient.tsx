@@ -8,6 +8,7 @@ import {
   Send, Save, ArrowLeft, Check, CheckCircle2, Info
 } from 'lucide-react';
 import { formatPaise } from '@/lib/money';
+import { AssessmentPanel } from '@/components/AssessmentPanel';
 import clsx from 'clsx';
 
 interface QuoteBuilderClientProps {
@@ -121,7 +122,6 @@ export default function QuoteBuilderClient({
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'x-user-role': 'SALES',
         },
         body: JSON.stringify({
           leadId: selectedLeadId,
@@ -240,6 +240,32 @@ export default function QuoteBuilderClient({
           ))}
         </select>
       </div>
+
+      {/* Persisted Site Assessment panel (FR-2.6): constraint flags + AI summary */}
+      {selectedLead && (
+        <AssessmentPanel
+          leadId={selectedLead.id}
+          initialBillRs={
+            selectedLead.monthly_bill_paise
+              ? Number(selectedLead.monthly_bill_paise) / 100
+              : undefined
+          }
+          initialRoofAreaM2={
+            selectedLead.roof_area_sqm ? Number(selectedLead.roof_area_sqm) : undefined
+          }
+          initialSanctionedLoadKw={
+            selectedLead.sanctioned_load_kw ? Number(selectedLead.sanctioned_load_kw) : undefined
+          }
+          initialShading={(selectedLead.survey?.shading as any) || 'NONE'}
+          assessment={selectedLead.assessment || null}
+          onUseInQuote={(kw) => {
+            const match = templates.find(
+              (t) => Number(t.capacity_kw) === kw && t.system_type === (selectedLead.assessment?.recommended_type || selectedLead.system_type_pref || 'ON_GRID')
+            );
+            setSelectedTemplateId(match ? match.id : templates[0]?.id || '');
+          }}
+        />
+      )}
 
       {/* System Templates Grid (1 to 5 kW On-Grid & Off-Grid) */}
       <div>

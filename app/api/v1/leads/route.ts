@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createApiHandler } from '@/lib/handler';
 import { getLeads, createLead } from '@/services/leads';
-import { CreateEnquirySchema } from '@/contracts';
+import { CreateStaffLeadSchema } from '@/contracts';
 
 export const GET = createApiHandler(
   {
@@ -17,14 +17,15 @@ export const GET = createApiHandler(
   }
 );
 
+// Staff-logged enquiry (FR-1.2): keeps source + ownerId from the payload.
+// The public web form uses POST /api/v1/public/enquiries instead.
 export const POST = createApiHandler(
   {
-    bodySchema: CreateEnquirySchema,
+    bodySchema: CreateStaffLeadSchema,
     allowedRoles: ['DIRECTOR', 'SALES'],
   },
   async ({ body, user }) => {
-    const lead = await createLead(body, user?.id);
+    const lead = await createLead(body, body.ownerId || user?.id);
     return NextResponse.json({ lead }, { status: 201 });
   }
 );
-

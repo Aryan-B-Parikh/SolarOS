@@ -96,7 +96,7 @@ function sha256(bytes: Uint8Array): Uint8Array {
  */
 function hmacSha256Base64Url(keyStr: string, msgStr: string): string {
   const encoder = new TextEncoder();
-  let key = encoder.encode(keyStr);
+  let key: Uint8Array<any> = encoder.encode(keyStr);
   const msg = encoder.encode(msgStr);
   const blockSize = 64;
   if (key.length > blockSize) key = sha256(key);

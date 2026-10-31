@@ -3,10 +3,10 @@
 import React, { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { 
-  ShoppingCart, ArrowLeft, Plus, CheckCircle2, 
-  AlertTriangle, Clock, CreditCard, ShieldCheck, 
-  Package, Calendar, Wrench, X, Check, Truck 
+import {
+  ShoppingCart, ArrowLeft, Plus, CheckCircle2,
+  AlertTriangle, Clock, CreditCard, ShieldCheck,
+  Package, Calendar, Wrench, X, Check, Truck, FileText, Download
 } from 'lucide-react';
 import { StageChip } from '@/components/StageChip';
 import { NextStepPanel } from '@/components/NextStepPanel';
@@ -59,7 +59,6 @@ export default function OrderDetailClient({ initialOrder }: OrderDetailClientPro
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'x-user-role': 'ACCOUNTS',
         },
         body: JSON.stringify({
           orderId: order.id,
@@ -101,7 +100,6 @@ export default function OrderDetailClient({ initialOrder }: OrderDetailClientPro
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'x-user-role': 'DIRECTOR',
         },
       });
       if (!res.ok) {
@@ -126,7 +124,6 @@ export default function OrderDetailClient({ initialOrder }: OrderDetailClientPro
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',
-          'x-user-role': 'ACCOUNTS',
         },
         body: JSON.stringify({
           status: subsidyForm.status,
@@ -382,6 +379,68 @@ export default function OrderDetailClient({ initialOrder }: OrderDetailClientPro
             </tbody>
           </table>
         </div>
+      </div>
+
+      {/* Invoices (FR-8.7): SALES invoice generated on confirmation */}
+      <div className="p-5 rounded-xl border border-slate-200 bg-white shadow-xs space-y-4">
+        <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+          <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+            <FileText className="w-4 h-4 text-indigo-600" />
+            <span>Invoices ({order.invoices?.length || 0})</span>
+          </h3>
+          <span className="text-[11px] text-slate-400">Tax invoice PDFs with company branding, GSTIN &amp; bank details</span>
+        </div>
+
+        {(!order.invoices || order.invoices.length === 0) ? (
+          <p className="text-xs text-slate-500 py-4 text-center">
+            No invoices yet. A sales tax invoice is generated automatically when the order is confirmed.
+          </p>
+        ) : (
+          <div className="space-y-3">
+            {order.invoices.map((inv: any) => (
+              <div
+                key={inv.id}
+                className="p-3 rounded-lg border border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs"
+              >
+                <div>
+                  <span className="font-bold text-slate-900 font-mono">{inv.invoice_number}</span>
+                  <span className="text-slate-400 mx-2">•</span>
+                  <span className="font-medium text-slate-700">
+                    {inv.type === 'SALES' ? 'Sales Invoice' : 'Service Invoice'}
+                  </span>
+                  <span className="block text-[10px] text-slate-400 mt-0.5">
+                    Issued {inv.issue_date ? formatDateIST(inv.issue_date) : '—'} · Due{' '}
+                    {inv.due_date ? formatDateIST(inv.due_date) : '—'}
+                  </span>
+                </div>
+                <div className="flex items-center gap-3">
+                  <span
+                    className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                      inv.status === 'PAID'
+                        ? 'bg-emerald-100 text-emerald-800'
+                        : inv.status === 'CANCELLED'
+                          ? 'bg-red-100 text-red-700'
+                          : 'bg-blue-50 text-blue-700'
+                    }`}
+                  >
+                    {inv.status}
+                  </span>
+                  <MoneyText paise={inv.total_paise} className="font-bold text-slate-900" />
+                  {/* Staff PDF link (session cookie authorises the download) */}
+                  <a
+                    href={`/api/v1/invoices/${inv.id}/pdf`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600 text-white font-semibold text-[11px] hover:bg-indigo-700 transition-colors"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    <span>PDF</span>
+                  </a>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Payments Ledger (FR-4.2) & Subsidy Application (FR-4.8) */}

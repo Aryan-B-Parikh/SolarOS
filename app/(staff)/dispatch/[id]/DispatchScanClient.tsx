@@ -3,6 +3,7 @@
 import React, { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
+import { v4 as uuidv4 } from 'uuid';
 import {
   ArrowLeft,
   Truck,
@@ -16,6 +17,7 @@ import {
   Calendar,
   Layers,
   ChevronRight,
+  PackagePlus,
   ShieldCheck,
   Send
 } from 'lucide-react';
@@ -34,6 +36,7 @@ interface DispatchLine {
   productId: string;
   productName: string;
   productSku: string;
+  isSerialized: boolean;
   qtyRequired: number;
   qtyLoaded: number;
   scannedUnits: ScannedUnit[];
@@ -65,6 +68,11 @@ export default function DispatchScanClient({
   const [manualCode, setManualCode] = useState<string>('');
   const [loadingAction, setLoadingAction] = useState<boolean>(false);
   const [scanMessage, setScanMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
+  // Per-line manual load quantities for non-serialized (bulk) items (FR-5.5)
+  const [loadQty, setLoadQty] = useState<Record<string, string>>({});
+  // Idempotency key for the departure action: generated once and reused so a
+  // retried/network-repeated departure never double-decrements stock.
+  const [departIdempotencyKey] = useState<string>(() => uuidv4());
 
   const totalRequired = dispatch.lines.reduce((s, l) => s + l.qtyRequired, 0);
   const totalLoaded = dispatch.lines.reduce((s, l) => s + l.qtyLoaded, 0);
@@ -93,19 +101,13 @@ export default function DispatchScanClient({
       setScanMessage({ text: `Unit ${clean} scanned successfully!`, type: 'success' });
       setManualCode('');
 
-      // Refresh dispatch details
-      const refreshRes = await fetch(`/api/v1/dispatches/${dispatch.id}`).catch(() => null);
-      if (refreshRes && refreshRes.ok) {
-        const updated = await refreshRes.json();
-        setDispatch(updated);
-      } else {
-        // Optimistically update
-        setDispatch((prev) => {
-          const updatedLines = prev.lines.map((l) => {
-            if (l.id === data.lineId) {
-              return {
+      // Update line state from the scan response (product ids map 1:1 to lines)
+      setDispatch((prev) => {
+        const updatedLines = prev.lines.map((l) =>
+          l.productId === data.productId
+            ? {
                 ...l,
-                qtyLoaded: l.qtyLoaded + 1,
+                qtyLoaded: data.qtyLoaded ?? l.qtyLoaded + 1,
                 scannedUnits: [
                   ...l.scannedUnits,
                   {
@@ -116,13 +118,15 @@ export default function DispatchScanClient({
                     scannedAt: new Date().toISOString(),
                   },
                 ],
-              };
-            }
-            return l;
-          });
-          return { ...prev, lines: updatedLines };
-        });
-      }
+              }
+            : l
+        );
+        return {
+          ...prev,
+          status: data.isDispatchReady ? 'READY' : prev.status,
+          lines: updatedLines,
+        };
+      });
     } catch (err: any) {
       setScanMessage({ text: err.message || 'Scan failed', type: 'error' });
     }
@@ -159,6 +163,48 @@ export default function DispatchScanClient({
     }
   }
 
+  /** Loads a bulk (non-serialized) quantity onto a dispatch line (FR-5.5). */
+  async function handleLoadNonSerialized(lineId: string, productName: string) {
+    const raw = loadQty[lineId];
+    const qty = Number(raw);
+    if (!raw || !Number.isFinite(qty) || qty <= 0) {
+      setScanMessage({ text: `Enter a quantity greater than zero for ${productName}.`, type: 'error' });
+      return;
+    }
+
+    setLoadingAction(true);
+    setScanMessage(null);
+    try {
+      const res = await fetch(`/api/v1/dispatch/${dispatch.id}/load`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ lineId, qty }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error?.message || data.message || 'Load rejected');
+      }
+
+      setDispatch((prev) => ({
+        ...prev,
+        status: data.isDispatchReady ? 'READY' : prev.status,
+        lines: prev.lines.map((l) =>
+          l.id === lineId ? { ...l, qtyLoaded: data.qtyLoaded ?? l.qtyLoaded } : l
+        ),
+      }));
+      setLoadQty((prev) => ({ ...prev, [lineId]: '' }));
+      setScanMessage({
+        text: `Loaded ${qty} × ${productName} (${data.qtyLoaded}/${data.qtyRequired}).`,
+        type: 'success',
+      });
+    } catch (err: any) {
+      setScanMessage({ text: err.message || 'Load failed', type: 'error' });
+    } finally {
+      setLoadingAction(false);
+    }
+  }
+
   async function handleDepart() {
     if (!allComplete) {
       alert('Cannot depart: not all required equipment lines have been loaded.');
@@ -173,8 +219,11 @@ export default function DispatchScanClient({
     try {
       const res = await fetch(`/api/v1/dispatch/${dispatch.id}/depart`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({}),
+        headers: {
+          'Content-Type': 'application/json',
+          'x-idempotency-key': departIdempotencyKey,
+        },
+        body: JSON.stringify({ idempotencyKey: departIdempotencyKey }),
       });
 
       const data = await res.json();
@@ -458,6 +507,43 @@ export default function DispatchScanClient({
                     ))}
                   </div>
                 )}
+
+                {/* Non-serialized bulk loading (FR-5.5: cable, structure, ACDB/DCDB) */}
+                {!line.isSerialized &&
+                  !isLineFulfilled &&
+                  (dispatch.status === 'PICKING' || dispatch.status === 'READY') && (
+                    <div className="flex flex-col sm:flex-row sm:items-center gap-2 bg-slate-50 border border-slate-200 rounded-xl p-3">
+                      <div className="flex items-center gap-2 text-xs font-semibold text-slate-700">
+                        <PackagePlus className="w-4 h-4 text-orange-600" />
+                        <span>Bulk item — load quantity</span>
+                      </div>
+                      <input
+                        type="number"
+                        min={1}
+                        max={line.qtyRequired - line.qtyLoaded}
+                        step="any"
+                        placeholder={`0 - ${line.qtyRequired - line.qtyLoaded}`}
+                        value={loadQty[line.id] ?? ''}
+                        onChange={(e) =>
+                          setLoadQty((prev) => ({ ...prev, [line.id]: e.target.value }))
+                        }
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            handleLoadNonSerialized(line.id, line.productName);
+                          }
+                        }}
+                        className="w-full sm:w-28 px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-orange-500"
+                      />
+                      <button
+                        onClick={() => handleLoadNonSerialized(line.id, line.productName)}
+                        disabled={loadingAction}
+                        className="px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white rounded-lg text-xs font-bold shadow-xs disabled:opacity-50"
+                      >
+                        Load {line.qtyRequired - line.qtyLoaded > 0 ? `(${line.qtyRequired - line.qtyLoaded} remaining)` : ''}
+                      </button>
+                    </div>
+                  )}
               </div>
             );
           })}

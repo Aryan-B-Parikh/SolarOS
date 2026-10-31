@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { hashToken, evaluateLinkStatus } from '@/lib/access-links';
+import { hashToken, evaluateLinkStatus, VERIFIED_SESSION_COOKIE_NAME, validateVerifiedSessionToken } from '@/lib/access-links';
 import { prisma } from '@/lib/db';
 import { AppError } from '@/lib/errors';
 import { confirmTicketResolution } from '@/services/tickets';
@@ -29,15 +29,41 @@ async function getPortalCustomer(rawToken: string) {
     throw new AppError(`LINK_${status}`, `This portal access link is ${status.toLowerCase()}`, 403);
   }
 
-  return link.customer;
+  return { link, customer: link.customer };
 }
 
+/**
+ * FR-10.7 — customer confirms a ticket resolution from the portal (Rule C9).
+ * Sensitive action (D11): in addition to the valid portal link, this requires
+ * the 30-minute verified session cookie granted after the phone last-4
+ * challenge (POST /api/v1/portal/[token]/verify).
+ */
 export async function POST(
   req: NextRequest,
   { params }: { params: { token: string; ticketId: string } }
 ) {
   try {
-    const customer = await getPortalCustomer(params.token);
+    const { link, customer } = await getPortalCustomer(params.token);
+
+    // D11: enforce the verified session for this sensitive action
+    const verifiedCookie = req.cookies.get(VERIFIED_SESSION_COOKIE_NAME)?.value;
+    const isVerified = !!(
+      verifiedCookie &&
+      validateVerifiedSessionToken(verifiedCookie, link.token_hash, customer.id)
+    );
+    if (!isVerified) {
+      return NextResponse.json(
+        {
+          error: {
+            code: 'VERIFICATION_REQUIRED',
+            message:
+              'Confirming a resolution requires verification. Enter the last 4 digits of your registered phone number on the portal first.',
+          },
+        },
+        { status: 403 }
+      );
+    }
+
     const rawBody = await req.json().catch(() => ({}));
 
     // Verify ticket belongs to customer

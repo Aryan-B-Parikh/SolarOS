@@ -9,7 +9,7 @@ const nextConfig = {
     ignoreDuringBuilds: true,
   },
   experimental: {
-    serverComponentsExternalPackages: ['@node-rs/argon2', 'argon2'],
+    serverComponentsExternalPackages: ['@node-rs/argon2', 'argon2', 'pdfkit'],
   },
 };
 

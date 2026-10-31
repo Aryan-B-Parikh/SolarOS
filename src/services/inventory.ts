@@ -7,6 +7,8 @@
 import { prisma } from '@/lib/db';
 import { AppError } from '@/lib/errors';
 import { recordAudit } from '@/lib/audit';
+import { queueNotification } from '@/lib/outbox';
+import { logger } from '@/lib/logger';
 import { MovementType } from '@prisma/client';
 
 export interface StockOverviewItem {
@@ -226,7 +228,116 @@ export async function adjustStock(input: AdjustStockInput) {
       available: Number(updated.on_hand) - Number(updated.reserved),
       movementId: movement.id,
     };
+  }).then((result) => {
+    // Fire-and-forget low-stock check after the adjustment commits (FR-5.3)
+    notifyLowStock(input.productId, actorId).catch(() => {});
+    return result;
   });
+}
+
+/**
+ * Low-stock alerting (FR-5.3): after any stock change, evaluates products
+ * whose total available balance (on_hand - reserved across all locations)
+ * has fallen to or below the reorder level and queues a LOW_STOCK_ALERT
+ * email to every active DIRECTOR and WAREHOUSE user.
+ *
+ * Idempotent per product + observed quantity: the outbox idempotency key
+ * `low-stock:<productId>:<availableQty>` prevents duplicate alerts until the
+ * availability changes again.
+ *
+ * Designed to be invoked fire-and-forget (`.catch`) so alerting issues never
+ * break the main stock flow.
+ */
+export async function notifyLowStock(productId?: string, actorId?: string) {
+  // Aggregate availability per product across every location
+  const levels = await prisma.stockLevel.findMany({
+    where: productId ? { product_id: productId } : undefined,
+    select: {
+      product_id: true,
+      on_hand: true,
+      reserved: true,
+      product: {
+        select: { sku: true, name: true, reorder_level: true, is_active: true },
+      },
+    },
+  });
+
+  const availabilityByProduct = new Map<
+    string,
+    { sku: string; productName: string; reorderLevel: number; availableQty: number; isActive: boolean }
+  >();
+  for (const level of levels) {
+    const entry = availabilityByProduct.get(level.product_id) ?? {
+      sku: level.product.sku,
+      productName: level.product.name,
+      reorderLevel: Number(level.product.reorder_level),
+      availableQty: 0,
+      isActive: level.product.is_active,
+    };
+    entry.availableQty += Number(level.on_hand) - Number(level.reserved);
+    availabilityByProduct.set(level.product_id, entry);
+  }
+
+  const lowStock = Array.from(availabilityByProduct.entries())
+    .filter(([, v]) => v.isActive && v.availableQty <= v.reorderLevel)
+    .map(([id, v]) => ({ productId: id, ...v }));
+
+  if (lowStock.length === 0) return { alerted: 0, lowStock: [] as string[] };
+
+  // Alert recipients: all active DIRECTOR and WAREHOUSE users
+  const recipients = await prisma.user.findMany({
+    where: {
+      role: { in: ['DIRECTOR', 'WAREHOUSE'] },
+      is_active: true,
+    },
+    select: { email: true },
+  });
+  const emails = recipients.map((r) => r.email).filter(Boolean);
+
+  let alerted = 0;
+  for (const item of lowStock) {
+    for (const email of emails) {
+      try {
+        await queueNotification({
+          channel: 'EMAIL',
+          recipient: email,
+          template: 'LOW_STOCK_ALERT',
+          payload: {
+            sku: item.sku,
+            productName: item.productName,
+            availableQty: item.availableQty,
+            reorderLevel: item.reorderLevel,
+          },
+          idempotencyKey: `low-stock:${item.productId}:${item.availableQty}`,
+        });
+        alerted++;
+      } catch (err: any) {
+        // Duplicate idempotency key means this alert was already queued —
+        // anything else is logged and skipped without failing the batch.
+        logger.warn('Low stock alert skipped', {
+          productId: item.productId,
+          recipient: email,
+          error: String(err?.message || err),
+        });
+      }
+    }
+  }
+
+  if (actorId) {
+    await recordAudit({
+      actorType: 'USER',
+      actorId,
+      entityType: 'PRODUCT',
+      entityId: lowStock[0].productId,
+      action: 'LOW_STOCK_ALERTED',
+      after: {
+        lowStockProducts: lowStock.map((i) => ({ sku: i.sku, availableQty: i.availableQty })),
+        notificationsQueued: alerted,
+      },
+    }).catch(() => {});
+  }
+
+  return { alerted, lowStock: lowStock.map((i) => i.sku) };
 }
 
 /**

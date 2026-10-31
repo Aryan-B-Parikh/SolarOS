@@ -1,79 +1,58 @@
 import React from 'react';
 import { prisma } from '@/lib/db';
+import { getAnalyticsSummary, getProjectProfitabilityList } from '@/services/analytics';
 import DashboardClient from './DashboardClient';
 
 export const dynamic = 'force-dynamic';
 
-export default async function DashboardPage() {
-  const [
-    orders,
-    payments,
-    expenses,
-    leads,
-    tickets,
-    lowStockLevels,
-    expiringWarranties,
-  ] = await Promise.all([
-    // Orders with customer and lines for profitability
-    prisma.order.findMany({
-      include: {
-        customer: true,
-        expenses: true,
-        installation: {
-          include: { time_logs: true },
-        },
-      },
-      orderBy: { created_at: 'desc' },
-    }),
-    // Payments
-    prisma.payment.findMany({
-      orderBy: { received_on: 'desc' },
-    }),
-    // Expenses
-    prisma.expense.findMany({
-      orderBy: { incurred_on: 'desc' },
-    }),
-    // Leads by status
-    prisma.lead.findMany({
-      include: { customer: true },
-      orderBy: { created_at: 'desc' },
-    }),
-    // Open tickets
-    prisma.serviceTicket.findMany({
-      where: { status: { notIn: ['CLOSED'] } },
-      include: { customer: true },
-      orderBy: { created_at: 'desc' },
-    }),
-    // Low stock items
-    prisma.stockLevel.findMany({
-      where: {
-        product: { is_active: true },
-      },
-      include: { product: true, location: true },
-    }),
-    // Expiring warranties in next 60 days
-    prisma.warranty.findMany({
-      where: {
-        status: 'ACTIVE',
-        end_date: {
-          lte: new Date(Date.now() + 60 * 24 * 60 * 60 * 1000),
-          gte: new Date(),
-        },
-      },
-      include: { customer: true, product: true },
-    }),
-  ]);
-
-  return (
-    <DashboardClient
-      orders={orders as any}
-      payments={payments as any}
-      expenses={expenses as any}
-      leads={leads as any}
-      tickets={tickets as any}
-      stockLevels={lowStockLevels as any}
-      expiringWarranties={expiringWarranties as any}
-    />
+/** BigInt-safe serialization for client components (paise -> string). */
+function serialize(obj: any): any {
+  return JSON.parse(
+    JSON.stringify(obj, (_k, v) => {
+      if (typeof v === 'bigint') return v.toString();
+      if (v instanceof Date) return v.toISOString();
+      return v;
+    })
   );
 }
 
+export default async function DashboardPage() {
+  const [summary, projects, openTickets, leads, orders] = await Promise.all([
+    getAnalyticsSummary(),
+    getProjectProfitabilityList({ limit: 100 }),
+    prisma.serviceTicket.findMany({
+      where: { status: { notIn: ['RESOLVED', 'CLOSED'] } },
+      include: { customer: true },
+      orderBy: { created_at: 'desc' },
+      take: 8,
+    }),
+    prisma.lead.findMany({
+      where: { status: { in: ['SURVEY_SCHEDULED', 'QUALIFIED'] } },
+      select: { id: true, status: true, survey: { select: { status: true } } },
+    }),
+    prisma.order.findMany({
+      where: { status: { in: ['PENDING_ADVANCE', 'CONFIRMED'] } },
+      select: { id: true, status: true },
+    }),
+  ]);
+
+  // Real pending-work counts (FR-8.3).
+  const pendingSteps = {
+    leadsAwaitingSurvey: leads.filter((l) => l.status === 'SURVEY_SCHEDULED' && l.survey?.status === 'SCHEDULED')
+      .length,
+    surveysAwaitingReview: leads.filter(
+      (l) => l.status === 'SURVEY_SCHEDULED' && l.survey?.status === 'COMPLETED'
+    ).length,
+    ordersPendingAdvance: orders.filter((o) => o.status === 'PENDING_ADVANCE').length,
+    ordersConfirmed: orders.filter((o) => o.status === 'CONFIRMED').length,
+  };
+
+  return (
+    <DashboardClient
+      initialSummary={serialize(summary)}
+      projects={serialize(projects)}
+      tickets={serialize(openTickets)}
+      pendingSteps={pendingSteps}
+    />
+  );
+}

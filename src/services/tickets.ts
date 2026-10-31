@@ -8,6 +8,7 @@
 import { prisma } from '../lib/db.ts';
 import { AppError } from '../lib/errors.ts';
 import { recordAudit } from '../lib/audit.ts';
+import { queueNotification } from '../lib/outbox.ts';
 import { getNextSequence } from '../lib/sequences.ts';
 import { evaluateWarrantyEligibility, transferWarrantyToReplacement } from '../domain/warranty.ts';
 import {
@@ -19,6 +20,7 @@ import {
   type TicketChannel,
 } from '../domain/tickets.ts';
 import { createServiceInvoice } from './invoices.ts';
+import { formatDateTimeIST } from '../lib/dates.ts';
 import {
   UnitStatus,
   WarrantyStatus,
@@ -28,6 +30,7 @@ import {
   TicketStatus,
   WarrantyVerdict,
   BillingMode,
+  AttachmentOwnerType,
 } from '@prisma/client';
 
 export interface CreateTicketDto {
@@ -67,6 +70,82 @@ export interface ReopenTicketDto {
 
 export interface ExcludeWarrantyDto {
   reason: string;
+  /** Photo evidence attachment (owner_type TICKET, owner_id = ticket id) — required (FR-7.7). */
+  photoAttachmentId: string;
+}
+
+// ==========================================
+// Fault Codes (FR-7.9 — per-model list from the fault_codes table + free text)
+// ==========================================
+
+export interface FaultCodeView {
+  code: string;
+  description: string;
+  defaultPriority: string;
+}
+
+export interface FaultCodesByModel {
+  [productModel: string]: FaultCodeView[];
+}
+
+export interface FaultCodeCatalogueResponse {
+  totalCodes: number;
+  byModel: FaultCodesByModel;
+}
+
+/**
+ * Pure helper: decides whether a submitted fault code is a known catalogue code
+ * for the given inverter model. Per spec the list is "per-model + free text":
+ * an unknown code is accepted as-is (stored verbatim) but flagged as unrecognised.
+ */
+export function matchFaultCode(
+  catalogue: FaultCodesByModel,
+  productModel: string | null | undefined,
+  faultCode: string
+): { isKnown: boolean; normalizedCode: string; matchedModel: string | null } {
+  const normalized = faultCode.trim().toUpperCase();
+  if (!normalized) return { isKnown: false, normalizedCode: normalized, matchedModel: null };
+
+  // 1. Exact match against the unit's own model
+  if (productModel) {
+    const modelKey = Object.keys(catalogue).find(
+      (m) => m.toLowerCase() === productModel.toLowerCase()
+    );
+    if (modelKey && catalogue[modelKey].some((c) => c.code.toUpperCase() === normalized)) {
+      return { isKnown: true, normalizedCode: normalized, matchedModel: modelKey };
+    }
+  }
+
+  // 2. Any-model match (customer may read a code without knowing the model)
+  for (const model of Object.keys(catalogue)) {
+    if (catalogue[model].some((c) => c.code.toUpperCase() === normalized)) {
+      return { isKnown: true, normalizedCode: normalized, matchedModel: model };
+    }
+  }
+
+  // 3. Free text fallback: accepted but stored as-is
+  return { isKnown: false, normalizedCode: faultCode.trim(), matchedModel: null };
+}
+
+/**
+ * Loads all fault codes from the DB grouped by inverter model (FR-7.9).
+ */
+export async function getFaultCodeCatalogue(): Promise<FaultCodeCatalogueResponse> {
+  const rows = await prisma.faultCode.findMany({
+    orderBy: [{ product_model: 'asc' }, { code: 'asc' }],
+  });
+
+  const byModel: FaultCodesByModel = {};
+  for (const row of rows) {
+    if (!byModel[row.product_model]) byModel[row.product_model] = [];
+    byModel[row.product_model].push({
+      code: row.code,
+      description: row.description,
+      defaultPriority: row.default_priority,
+    });
+  }
+
+  return { totalCodes: rows.length, byModel };
 }
 
 /**
@@ -127,6 +206,29 @@ export async function createTicket(data: CreateTicketDto, actorId?: string) {
 
     activeWarranty = unit?.warranties?.[0] || null;
 
+    // 2b. Fault code validation against the DB catalogue (FR-7.9: per-model + free text).
+    let resolvedFaultCode: string | null = data.faultCode?.trim() || null;
+    let faultCodeKnown = true;
+
+    if (data.category === 'FAULT_CODE' && resolvedFaultCode) {
+      const catalogueRows = await tx.faultCode.findMany();
+      const byModel: FaultCodesByModel = {};
+      for (const row of catalogueRows) {
+        if (!byModel[row.product_model]) byModel[row.product_model] = [];
+        byModel[row.product_model].push({
+          code: row.code,
+          description: row.description,
+          defaultPriority: row.default_priority,
+        });
+      }
+      const match = matchFaultCode(byModel, unit?.product?.model, resolvedFaultCode);
+      // Unknown codes are accepted but stored as-is (free text fallback per spec).
+      resolvedFaultCode = match.normalizedCode;
+      faultCodeKnown = match.isKnown;
+    } else if (resolvedFaultCode) {
+      resolvedFaultCode = resolvedFaultCode.trim();
+    }
+
     // 3. Compute Warranty Verdict and Billing Mode
     const verdictEvaluation = determineVerdictAndBilling(
       activeWarranty
@@ -166,7 +268,7 @@ export async function createTicket(data: CreateTicketDto, actorId?: string) {
         warranty_id: warrantyId,
         channel: data.channel || 'PHONE',
         category: data.category,
-        fault_code: data.faultCode || null,
+        fault_code: resolvedFaultCode,
         description: data.description,
         priority: priority as any,
         status: TicketStatus.OPEN,
@@ -178,7 +280,11 @@ export async function createTicket(data: CreateTicketDto, actorId?: string) {
           create: {
             type: 'CREATED',
             to_status: TicketStatus.OPEN,
-            note: `Ticket created via ${data.channel || 'PHONE'}. Priority: ${priority}. Verdict: ${warrantyVerdict}.`,
+            note: `Ticket created via ${data.channel || 'PHONE'}. Priority: ${priority}. Verdict: ${warrantyVerdict}.${
+              resolvedFaultCode
+                ? ` Fault code: ${resolvedFaultCode}${faultCodeKnown ? '' : ' (uncatalogued — recorded as reported)'}`
+                : ''
+            }`,
             actor_id: actorId || null,
           },
         },
@@ -190,6 +296,27 @@ export async function createTicket(data: CreateTicketDto, actorId?: string) {
         events: true,
       },
     });
+
+    // 6b. AUTO-10 / FR-7.8: notify the customer that the ticket was raised.
+    // Link-free payload — the customer reaches the portal via their existing link.
+    if (customer.email || customer.phone) {
+      await queueNotification(
+        {
+          channel: customer.email ? 'EMAIL' : 'SMS',
+          recipient: customer.email || customer.phone!,
+          template: 'TICKET_CREATED',
+          payload: {
+            customerName: customer.name,
+            ticketNumber: ticket.ticket_number,
+            category: ticket.category,
+            priority: ticket.priority as string,
+            slaNote: `Our service team will attend to your request by ${formatDateTimeIST(slaDueAt)} IST.`,
+          },
+          idempotencyKey: `ticket-created:${ticket.id}`,
+        },
+        tx
+      );
+    }
 
     await recordAudit(
       {
@@ -203,6 +330,9 @@ export async function createTicket(data: CreateTicketDto, actorId?: string) {
           priority: ticket.priority,
           verdict: ticket.warranty_verdict,
           billingMode: ticket.billing_mode,
+          faultCode: ticket.fault_code,
+          faultCodeCatalogued: faultCodeKnown,
+          channel: ticket.channel,
         },
       },
       tx
@@ -667,6 +797,27 @@ export async function resolveTicket(ticketId: string, dto: ResolveTicketDto, act
       tx
     );
 
+    // FR-7.8 / AUTO-10: notify the customer that the issue is resolved.
+    // Link-free payload — the customer confirms via their existing portal link.
+    if (ticket.customer.email || ticket.customer.phone) {
+      await queueNotification(
+        {
+          channel: ticket.customer.email ? 'EMAIL' : 'SMS',
+          recipient: ticket.customer.email || ticket.customer.phone!,
+          template: 'TICKET_RESOLVED',
+          payload: {
+            customerName: ticket.customer.name,
+            ticketNumber: ticket.ticket_number,
+            resolutionNotes: dto.resolutionNotes,
+            confirmNote:
+              'If everything is working, please confirm the fix via your SunPower customer portal link; if the issue persists, reopen the request there.',
+          },
+          idempotencyKey: `ticket-resolved:${ticket.id}`,
+        },
+        tx
+      );
+    }
+
     return {
       ticket: updated,
       invoice: generatedInvoice,
@@ -831,6 +982,8 @@ export async function reopenTicket(ticketId: string, dto: ReopenTicketDto, actor
 
 /**
  * Excludes a ticket / unit warranty with director approval.
+ * FR-7.7: requires at least one photo evidence attachment (owner_type TICKET,
+ * owner_id = ticket id, uploaded via POST /api/v1/uploads with entityType TICKET).
  */
 export async function excludeTicketWarranty(ticketId: string, dto: ExcludeWarrantyDto, actorId: string) {
   return prisma.$transaction(async (tx) => {
@@ -841,6 +994,24 @@ export async function excludeTicketWarranty(ticketId: string, dto: ExcludeWarran
 
     if (!ticket) {
       throw new AppError('TICKET_NOT_FOUND', 'Service ticket not found', 404);
+    }
+
+    // FR-7.7: photo evidence is mandatory — verify the referenced attachment
+    // exists and belongs to this ticket.
+    const evidence = await tx.attachment.findFirst({
+      where: {
+        id: dto.photoAttachmentId,
+        owner_type: AttachmentOwnerType.TICKET,
+        owner_id: ticket.id,
+      },
+    });
+
+    if (!evidence) {
+      throw new AppError(
+        'PHOTOS_REQUIRED',
+        'A photo evidence attachment uploaded against this ticket is required to exclude warranty (FR-7.7).',
+        400
+      );
     }
 
     // Void the warranty record if linked
@@ -863,7 +1034,7 @@ export async function excludeTicketWarranty(ticketId: string, dto: ExcludeWarran
         events: {
           create: {
             type: 'WARRANTY_EXCLUDED',
-            note: `Warranty voided / excluded: ${dto.reason}`,
+            note: `Warranty voided / excluded: ${dto.reason} (photo evidence attachment ${evidence.id})`,
             actor_id: actorId,
           },
         },
@@ -880,6 +1051,7 @@ export async function excludeTicketWarranty(ticketId: string, dto: ExcludeWarran
         after: {
           reason: dto.reason,
           verdict: WarrantyVerdict.EXCLUDED,
+          photoEvidenceAttachmentId: evidence.id,
         },
       },
       tx
@@ -887,6 +1059,129 @@ export async function excludeTicketWarranty(ticketId: string, dto: ExcludeWarran
 
     return updated;
   });
+}
+
+// ==========================================
+// Customer equipment options for ticket creation (FR-7.3)
+// ==========================================
+
+export interface CustomerUnitOption {
+  id: string;
+  serialNumber: string;
+  qrCode: string;
+  productName: string;
+  brand: string;
+  model: string;
+  category: string;
+  status: string;
+  installationId: string | null;
+  warrantyVerdict: WarrantyVerdict;
+  warrantyEndDate: string | null;
+  remainingDays: number;
+}
+
+export interface CustomerInstallationOption {
+  id: string;
+  orderNumber: string;
+  status: string;
+  capacityKw: number;
+  scheduledOn: string | null;
+}
+
+export interface CustomerTicketContextResponse {
+  customerId: string;
+  customerName: string;
+  customerPhone: string;
+  installations: CustomerInstallationOption[];
+  units: CustomerUnitOption[];
+}
+
+/**
+ * Loads a customer's installations and installed serialized units (with the
+ * live warranty verdict per unit) so the staff ticket form can offer an
+ * installation / unit picker that drives the warranty verdict.
+ */
+export async function getCustomerTicketContext(customerId: string): Promise<CustomerTicketContextResponse> {
+  const customer = await prisma.customer.findUnique({
+    where: { id: customerId },
+    include: {
+      orders: {
+        include: { installation: true },
+        orderBy: { created_at: 'desc' },
+      },
+    },
+  });
+
+  if (!customer) {
+    throw new AppError('CUSTOMER_NOT_FOUND', 'Customer does not exist', 404);
+  }
+
+  const units = await prisma.inventoryUnit.findMany({
+    where: {
+      customer_id: customerId,
+      status: { in: [UnitStatus.INSTALLED, UnitStatus.DELIVERED] },
+    },
+    include: {
+      product: true,
+      warranties: { orderBy: { created_at: 'desc' }, take: 1 },
+    },
+    orderBy: { created_at: 'desc' },
+  });
+
+  const today = new Date();
+  const unitOptions: CustomerUnitOption[] = units.map((u) => {
+    const latest = u.warranties[0];
+    let verdict: WarrantyVerdict = WarrantyVerdict.UNKNOWN_UNIT;
+    let warrantyEndDate: string | null = null;
+    let remainingDays = 0;
+
+    if (latest) {
+      warrantyEndDate = latest.end_date.toISOString().split('T')[0];
+      const eligibility = evaluateWarrantyEligibility({
+        testDate: today,
+        startDate: latest.start_date.toISOString().split('T')[0],
+        endDate: warrantyEndDate,
+        status: latest.status as any,
+      });
+      verdict = eligibility.verdict as WarrantyVerdict;
+      remainingDays = eligibility.remainingDays;
+    }
+
+    return {
+      id: u.id,
+      serialNumber: u.serial_number,
+      qrCode: u.qr_code,
+      productName: u.product.name,
+      brand: u.product.brand,
+      model: u.product.model,
+      category: u.product.category as string,
+      status: u.status as string,
+      installationId: u.installation_id,
+      warrantyVerdict: verdict,
+      warrantyEndDate,
+      remainingDays,
+    };
+  });
+
+  const installations: CustomerInstallationOption[] = customer.orders
+    .filter((o) => o.installation !== null)
+    .map((o) => ({
+      id: o.installation!.id,
+      orderNumber: o.order_number,
+      status: o.installation!.status as string,
+      capacityKw: Number(o.capacity_kw || 0),
+      scheduledOn: o.installation!.scheduled_on
+        ? o.installation!.scheduled_on.toISOString().split('T')[0]
+        : null,
+    }));
+
+  return {
+    customerId: customer.id,
+    customerName: customer.name,
+    customerPhone: customer.phone,
+    installations,
+    units: unitOptions,
+  };
 }
 
 /**

@@ -6,6 +6,11 @@ import { normalizePhone, isAddressDuplicate } from '@/domain/duplicates';
 import { validateTransition } from '@/domain/state-machines/transitions';
 import { LeadSource, LeadStatus, SystemType, LeadActivityType, DuplicateFlagStatus } from '@prisma/client';
 import { rupeesToPaise } from '@/lib/money';
+import { addBusinessHours, businessHoursElapsedSince, LEAD_SLA_BUSINESS_HOURS } from '@/lib/dates';
+import { queueNotification } from '@/lib/outbox';
+
+// Re-exported for callers that import the SLA constant from the leads service.
+export { LEAD_SLA_BUSINESS_HOURS };
 
 export interface CreateLeadDto {
   name: string;
@@ -50,32 +55,40 @@ export async function createLead(data: CreateLeadDto, actorId?: string) {
       });
     }
 
-    // 2. Round-robin sales allocation if ownerId not provided
+    // 2. Round-robin sales allocation if ownerId not provided (FR-1.3).
+    //    True round-robin: the active SALES user with the FEWEST leads assigned
+    //    ALL TIME (open + closed) receives the next lead; ties are broken by
+    //    user created_at (longest-tenured rep first) so the rotation is stable
+    //    and fair instead of pinning work on whoever has the fewest open leads.
     let assignedOwnerId = data.ownerId;
     if (!assignedOwnerId) {
       const salesUsers = await tx.user.findMany({
         where: { role: 'SALES', is_active: true },
-        orderBy: { last_login_at: 'desc' },
+        orderBy: { created_at: 'asc' },
       });
       if (salesUsers.length > 0) {
-        // Pick least loaded sales rep
+        // Count ALL leads ever assigned to each sales user (no status filter).
         const counts = await tx.lead.groupBy({
           by: ['owner_id'],
           where: {
             owner_id: { in: salesUsers.map((u) => u.id) },
-            status: { notIn: ['WON', 'LOST', 'DISQUALIFIED'] },
           },
           _count: { id: true },
         });
         const loadMap = new Map(counts.map((c) => [c.owner_id, c._count.id]));
-        const sorted = [...salesUsers].sort((a, b) => (loadMap.get(a.id) || 0) - (loadMap.get(b.id) || 0));
+        const sorted = [...salesUsers].sort(
+          (a, b) =>
+            (loadMap.get(a.id) || 0) - (loadMap.get(b.id) || 0) ||
+            a.created_at.getTime() - b.created_at.getTime()
+        );
         assignedOwnerId = sorted[0].id;
       }
     }
 
     // 3. Lead Creation
     const leadNumber = await getNextSequence('lead', undefined, tx);
-    const slaDueAt = new Date(Date.now() + 4 * 60 * 60 * 1000); // 4 business hours SLA
+    // 4 business-hours SLA (FR-1.6): nights and Sundays do not count.
+    const slaDueAt = addBusinessHours(new Date(), LEAD_SLA_BUSINESS_HOURS);
 
     const lead = await tx.lead.create({
       data: {
@@ -375,4 +388,86 @@ export async function addLeadActivity(
       actor_id: actorId || null,
     },
   });
+}
+
+/**
+ * Stale-lead scanner (FR-1.6 / AUTO-8).
+ *
+ * Finds NEW leads that have blown the 4 business-hour first-contact SLA
+ * (business hours elapsed since creation >= 4, i.e. sla_due_at passed in
+ * business time) and queues EMAIL alerts to the owning sales rep and every
+ * active DIRECTOR.
+ *
+ * Notifications are idempotent per lead per IST day via the outbox
+ * idempotency key `stale-lead:<leadId>:<YYYY-MM-DD>`, so a cron running
+ * every 30 minutes never spams duplicates.
+ */
+export async function flagStaleLeads(now: Date = new Date()): Promise<{
+  scanned: number;
+  stale: number;
+  notificationsQueued: number;
+}> {
+  const candidates = await prisma.lead.findMany({
+    where: {
+      status: LeadStatus.NEW,
+      first_contacted_at: null,
+    },
+    include: {
+      customer: { select: { name: true } },
+      owner: { select: { id: true, name: true, email: true } },
+    },
+    orderBy: { created_at: 'asc' },
+    take: 200,
+  });
+
+  // IST calendar day for the idempotency key.
+  const istDay = new Date(now.getTime() + 5.5 * 3600 * 1000).toISOString().split('T')[0];
+
+  const stale = candidates.filter(
+    (l) => businessHoursElapsedSince(l.created_at, now) >= LEAD_SLA_BUSINESS_HOURS
+  );
+
+  let notificationsQueued = 0;
+  if (stale.length > 0) {
+    const directors = await prisma.user.findMany({
+      where: { role: 'DIRECTOR', is_active: true },
+      select: { email: true },
+    });
+
+    for (const lead of stale) {
+      const hoursUncontacted = Math.floor(businessHoursElapsedSince(lead.created_at, now));
+      const payload = {
+        leadNumber: lead.lead_number,
+        customerName: lead.customer.name,
+        hoursUncontacted,
+        ownerName: lead.owner?.name || 'Unassigned',
+      };
+
+      // Dedupe recipients (owner may also be blank).
+      const recipients = new Set<string>();
+      if (lead.owner?.email) recipients.add(lead.owner.email);
+      for (const d of directors) recipients.add(d.email);
+
+      for (const recipient of recipients) {
+        try {
+          await queueNotification({
+            channel: 'EMAIL',
+            recipient,
+            template: 'STALE_LEAD_ALERT',
+            payload,
+            idempotencyKey: `stale-lead:${lead.id}:${istDay}:${recipient}`,
+          });
+          notificationsQueued++;
+        } catch {
+          // Idempotency-key conflict => alert already queued today; skip.
+        }
+      }
+    }
+  }
+
+  return {
+    scanned: candidates.length,
+    stale: stale.length,
+    notificationsQueued,
+  };
 }

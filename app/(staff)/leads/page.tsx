@@ -24,7 +24,7 @@ export default async function LeadsPage({
     where.owner_id = searchParams.owner;
   }
 
-  const [leads, salesUsers] = await Promise.all([
+  const [leads, salesUsers, technicians] = await Promise.all([
     prisma.lead.findMany({
       where,
       include: {
@@ -37,6 +37,10 @@ export default async function LeadsPage({
     prisma.user.findMany({
       where: { role: 'SALES', is_active: true },
       select: { id: true, name: true },
+    }),
+    // Surveyor options for the Book Survey modal (FR-2.2).
+    prisma.technician.findMany({
+      include: { user: { select: { id: true, name: true } } },
     }),
   ]);
 
@@ -55,7 +59,11 @@ export default async function LeadsPage({
         </div>
 
         {/* Client-side quick action trigger */}
-        <LeadBoardClient salesUsers={salesUsers} initialLeads={leads as any} />
+        <LeadBoardClient
+          salesUsers={salesUsers}
+          initialLeads={leads as any}
+          technicians={technicians as any}
+        />
       </div>
     </div>
   );

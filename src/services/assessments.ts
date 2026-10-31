@@ -21,13 +21,16 @@ import {
 } from '@/domain/assessment';
 import {
   generateSiteAssessmentSummary,
+  generateFallbackSummary,
   analyzeSurveyPhotos,
+  generateFallbackPhotoAnalysis,
   AiAssessmentInput,
   PhotoAnalysisResult,
   AI_PROMPT_VERSION,
   DEFAULT_AI_MODEL,
 } from '@/lib/ai';
 import { rupeesToPaise } from '@/lib/money';
+import { isAiAssessmentEnabled } from '@/services/settings';
 
 export interface RunAssessmentOptions {
   monthlyBillRs?: number;
@@ -136,7 +139,14 @@ export async function runLeadAssessment(
     cableDistanceM: survey?.cable_distance_m ? Number(survey.cable_distance_m) : undefined,
   };
 
-  const aiResult = await generateSiteAssessmentSummary(aiInput, options.apiKey);
+  // 4. AI Customer Summary Generation (Strict Zero-PII).
+  // FR-2.7: the Gemini call is gated behind the `ai_assessment_enabled`
+  // setting (default FALSE) - when disabled we use the deterministic
+  // templated fallback so no external AI call is ever made.
+  const aiEnabled = await isAiAssessmentEnabled();
+  const aiResult = aiEnabled
+    ? await generateSiteAssessmentSummary(aiInput, options.apiKey)
+    : generateFallbackSummary(aiInput);
 
   // 5. Persist Assessment in Database
   const annualSavingsPaise = rupeesToPaise(calcResult.yearlySavingsRs);
@@ -223,8 +233,15 @@ export async function runSurveyPhotoAnalysis(
     throw new AppError('NOT_FOUND', 'Site survey not found', 404);
   }
 
+  // FR-2.7: vision calls are gated behind `ai_assessment_enabled`
+  // (default FALSE). When disabled we return the deterministic
+  // "Not analysed" advisory fallback without touching Gemini.
+  const aiEnabled = await isAiAssessmentEnabled();
+
   // Vision model advisory findings (strictly advisory, never alters numbers)
-  const findings: PhotoAnalysisResult = await analyzeSurveyPhotos(photoUrls, apiKey);
+  const findings: PhotoAnalysisResult = aiEnabled
+    ? await analyzeSurveyPhotos(photoUrls, apiKey)
+    : generateFallbackPhotoAnalysis();
 
   // Attach findings to the lead's site_assessment
   const assessment = await prisma.siteAssessment.findUnique({
@@ -236,7 +253,7 @@ export async function runSurveyPhotoAnalysis(
       where: { id: assessment.id },
       data: {
         photo_findings: findings as any,
-        photo_model: 'gemini-1.5-flash-vision',
+        photo_model: findings.fallbackUsed ? 'system-template-fallback' : 'gemini-1.5-flash-vision',
       },
     });
   }
@@ -248,7 +265,12 @@ export async function runSurveyPhotoAnalysis(
       entityType: 'SITE_SURVEY',
       entityId: survey.id,
       action: 'PHOTO_ANALYSIS_EXECUTED',
-      after: { isAdvisory: true, photoQuality: findings.photoQuality },
+      after: {
+        isAdvisory: true,
+        photoQuality: findings.photoQuality,
+        aiEnabled,
+        fallbackUsed: findings.fallbackUsed,
+      },
     },
     prisma
   );

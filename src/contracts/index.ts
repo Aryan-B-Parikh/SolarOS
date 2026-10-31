@@ -24,6 +24,17 @@ export const CreateEnquirySchema = z.object({
 
 export type CreateEnquiryInput = z.infer<typeof CreateEnquirySchema>;
 
+// Staff-logged enquiry (FR-1.2): sales records WhatsApp/phone/walk-in/referral
+// enquiries with source + explicit owner. Public form fields still apply.
+export const LeadSourceEnum = z.enum(['WEB', 'WHATSAPP', 'PHONE', 'WALK_IN', 'REFERRAL']);
+
+export const CreateStaffLeadSchema = CreateEnquirySchema.extend({
+  source: LeadSourceEnum.optional(),
+  ownerId: z.string().uuid('Valid sales owner UUID required').optional(),
+});
+
+export type CreateStaffLeadInput = z.infer<typeof CreateStaffLeadSchema>;
+
 // ==========================================
 // Lead Qualification & Transition Contracts
 // ==========================================

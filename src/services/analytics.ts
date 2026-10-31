@@ -13,6 +13,8 @@ import {
   getISTMonthRange,
   type AnalyticsPeriod,
   formatDateIST,
+  businessHoursElapsedSince,
+  LEAD_SLA_BUSINESS_HOURS,
 } from '../lib/dates.ts';
 import {
   calculateProjectProfitability,
@@ -124,6 +126,32 @@ function calculatePercentageChange(current: bigint, prior: bigint): number {
 }
 
 /**
+ * Aggregates outbound material cost from stock movements (Rule C10).
+ *
+ * FR-8.2 double-count fix: serialized units generate BOTH a DISPATCH
+ * movement (line-level, warehouse -> vehicle, avg cost x full loaded qty,
+ * unit_id NULL) AND a DELIVERY movement (per unit, unit_id set) when the
+ * customer signs off. Counting both charges serialized hardware twice.
+ * We therefore skip DELIVERY movements that carry a unit_id - the unit's
+ * cost is already captured once by its DISPATCH movement. Bulk
+ * (non-serialized) lines only ever get the DISPATCH movement, and RETURN
+ * movements (with or without unit_id) credit stock back.
+ */
+export function aggregateMaterialsCostPaise(
+  movements: Array<{ type: string; qty: any; unit_cost_paise: bigint; unit_id?: string | null }>
+): bigint {
+  let total = 0n;
+  for (const sm of movements) {
+    // Serialized unit delivered: cost already counted at DISPATCH. Skip.
+    if (sm.type === 'DELIVERY' && sm.unit_id) continue;
+    const multiplier = sm.type === 'RETURN' ? -1n : 1n;
+    const qtyBig = BigInt(Math.round(Number(sm.qty)));
+    total += multiplier * (qtyBig * sm.unit_cost_paise);
+  }
+  return total;
+}
+
+/**
  * Retrieves aggregate KPI metrics for Director Dashboard (Screen S19, Rule C10).
  */
 export async function getKpiMetrics(
@@ -173,7 +201,7 @@ export async function getKpiMetrics(
         created_at: { gte: start, lte: end },
         type: { in: ['DISPATCH', 'DELIVERY', 'RETURN'] },
       },
-      select: { type: true, qty: true, unit_cost_paise: true },
+      select: { type: true, qty: true, unit_cost_paise: true, unit_id: true },
     }),
   ]);
 
@@ -216,7 +244,7 @@ export async function getKpiMetrics(
         created_at: { gte: priorStart, lte: priorEnd },
         type: { in: ['DISPATCH', 'DELIVERY', 'RETURN'] },
       },
-      select: { type: true, qty: true, unit_cost_paise: true },
+      select: { type: true, qty: true, unit_cost_paise: true, unit_id: true },
     }),
   ]);
 
@@ -231,12 +259,7 @@ export async function getKpiMetrics(
     return acc + (BigInt(Math.round(durSec)) * log.hourly_cost_paise) / 3600n;
   }, 0n);
 
-  const curMaterials = currentDispatches.reduce((acc, sm) => {
-    const isReturn = sm.type === 'RETURN';
-    const multiplier = isReturn ? -1n : 1n;
-    const qtyBig = BigInt(Math.round(Number(sm.qty)));
-    return acc + multiplier * (qtyBig * sm.unit_cost_paise);
-  }, 0n);
+  const curMaterials = aggregateMaterialsCostPaise(currentDispatches);
 
   const curGrossProfit = curRevenue - curMaterials - curLabour - curExpenses;
   const curMarginBp = curRevenue > 0n ? Number((curGrossProfit * 10000n) / curRevenue) : 0;
@@ -252,12 +275,7 @@ export async function getKpiMetrics(
     return acc + (BigInt(Math.round(durSec)) * log.hourly_cost_paise) / 3600n;
   }, 0n);
 
-  const priorMaterials = priorDispatches.reduce((acc, sm) => {
-    const isReturn = sm.type === 'RETURN';
-    const multiplier = isReturn ? -1n : 1n;
-    const qtyBig = BigInt(Math.round(Number(sm.qty)));
-    return acc + multiplier * (qtyBig * sm.unit_cost_paise);
-  }, 0n);
+  const priorMaterials = aggregateMaterialsCostPaise(priorDispatches);
 
   const priorGrossProfit = priorRevenue - priorMaterials - priorLabour - priorExpensesTotal;
   const priorMarginBp = priorRevenue > 0n ? Number((priorGrossProfit * 10000n) / priorRevenue) : 0;
@@ -484,7 +502,7 @@ export async function getRevenueTrend(monthsBack = 6): Promise<MonthlyTrendData[
       }),
       prisma.stockMovement.findMany({
         where: { created_at: { gte: start, lte: end }, type: { in: ['DISPATCH', 'DELIVERY', 'RETURN'] } },
-        select: { type: true, qty: true, unit_cost_paise: true },
+        select: { type: true, qty: true, unit_cost_paise: true, unit_id: true },
       }),
     ]);
 
@@ -498,10 +516,8 @@ export async function getRevenueTrend(monthsBack = 6): Promise<MonthlyTrendData[
       return acc + (BigInt(Math.round(sec)) * l.hourly_cost_paise) / 3600n;
     }, 0n);
 
-    const materials = dispatches.reduce((acc, sm) => {
-      const mult = sm.type === 'RETURN' ? -1n : 1n;
-      return acc + mult * (BigInt(Math.round(Number(sm.qty))) * sm.unit_cost_paise);
-    }, 0n);
+    // Serialized unit cost counted once (see aggregateMaterialsCostPaise).
+    const materials = aggregateMaterialsCostPaise(dispatches);
 
     const grossProfit = revenue - materials - labour - exp;
 
@@ -542,9 +558,8 @@ export async function getTopProfitJobs(limit = 5): Promise<ProjectProfitabilityR
 export async function getDashboardAlerts(): Promise<DashboardAlertsSummary> {
   const now = new Date();
   const sixtyDaysFuture = new Date(now.getTime() + 60 * 24 * 3600 * 1000);
-  const fourHoursAgo = new Date(now.getTime() - 4 * 3600 * 1000);
 
-  const [lossProjects, expiringWarranties, lowStockLevels, uncontactedLeads] = await Promise.all([
+  const [lossProjects, expiringWarranties, lowStockLevels, uncontactedLeadsRaw] = await Promise.all([
     getProjectProfitabilityList({ isLossOnly: true, limit: 10 }),
     prisma.warranty.findMany({
       where: {
@@ -565,16 +580,24 @@ export async function getDashboardAlerts(): Promise<DashboardAlertsSummary> {
       },
       include: { product: true },
     }),
+    // Pre-filter: leads at least 4 calendar hours old (necessary lower bound
+    // since business hours are a subset of clock hours), then the exact
+    // business-hours check is applied below.
     prisma.lead.findMany({
       where: {
         status: 'NEW',
-        created_at: { lte: fourHoursAgo },
+        created_at: { lte: new Date(now.getTime() - LEAD_SLA_BUSINESS_HOURS * 3600 * 1000) },
       },
       include: { customer: true },
       orderBy: { created_at: 'asc' },
-      take: 10,
+      take: 50,
     }),
   ]);
+
+  // Uncontacted leads: >= 4 BUSINESS hours since creation (FR-1.6).
+  const uncontactedLeads = uncontactedLeadsRaw
+    .filter((l) => businessHoursElapsedSince(l.created_at, now) >= LEAD_SLA_BUSINESS_HOURS)
+    .slice(0, 10);
 
   // Format low stock
   const lowStockItems = lowStockLevels
@@ -602,7 +625,7 @@ export async function getDashboardAlerts(): Promise<DashboardAlertsSummary> {
         warrantyId: w.id,
         unitId: w.unit_id,
         serialNumber: w.unit?.serial_number || 'N/A',
-        productName: w.product.name,
+        productName: w.product?.name || 'Component',
         customerName: w.customer.name,
         customerPhone: w.customer.phone,
         endDate: w.end_date.toISOString().split('T')[0],
@@ -611,7 +634,7 @@ export async function getDashboardAlerts(): Promise<DashboardAlertsSummary> {
     }),
     lowStockItems,
     uncontactedLeads: uncontactedLeads.map((l) => {
-      const hours = Math.round((now.getTime() - l.created_at.getTime()) / 3600000);
+      const hours = Math.round(businessHoursElapsedSince(l.created_at, now));
       return {
         leadId: l.id,
         leadNumber: l.lead_number,
@@ -653,7 +676,7 @@ export async function getPendingSteps() {
       entityType: 'LEAD',
       id: l.id,
       number: l.lead_number,
-      title: `${l.customer.name} (${l.capacity_kw} kW)`,
+      title: `${l.customer.name} (${Number(l.requested_capacity_kw)} kW)`,
       stage: l.status,
       ageDays: Math.floor((now.getTime() - l.updated_at.getTime()) / (86400 * 1000)),
       assigneeName: l.owner?.name || 'Unassigned',
@@ -717,7 +740,7 @@ export async function getTechnicianPaySummary(period: AnalyticsPeriod = 'THIS_MO
       payMap[techId] = {
         userId: techId,
         name: log.technician.user.name,
-        phone: log.technician.user.phone,
+        phone: log.technician.user.phone || '',
         totalSeconds: 0,
         hourlyCostPaise: log.hourly_cost_paise,
         jobIds: new Set(),
@@ -726,7 +749,7 @@ export async function getTechnicianPaySummary(period: AnalyticsPeriod = 'THIS_MO
 
     const durationSec = Math.max(0, (log.ended_at.getTime() - log.started_at.getTime()) / 1000);
     payMap[techId].totalSeconds += durationSec;
-    payMap[techId].jobIds.add(log.installation_id);
+    if (log.installation_id) payMap[techId].jobIds.add(log.installation_id);
   }
 
   return Object.values(payMap).map((t) => {
@@ -770,7 +793,8 @@ export function createDashboardShareToken(
   return {
     token,
     expiresAt,
-    shareUrl: `/dashboard/share/${token}`,
+    // Read-only public view (FR-8.6): app/(public)/shared/[token]/page.tsx
+    shareUrl: `/shared/${token}`,
   };
 }
 
@@ -815,4 +839,76 @@ export function verifyDashboardShareToken(
     expiresAt: new Date(payload.expiresAt),
     isExpired: false,
   };
+}
+
+/**
+ * Full dashboard summary used by GET /api/v1/analytics/summary:
+ * KPI tiles for today / this week / this month plus alert lists.
+ * (FR-8.1, C10)
+ */
+export async function getAnalyticsSummary(): Promise<{
+  today: DashboardKpiSummary;
+  thisWeek: DashboardKpiSummary;
+  thisMonth: DashboardKpiSummary;
+  alerts: DashboardAlertsSummary;
+}> {
+  const [today, thisWeek, thisMonth, alerts] = await Promise.all([
+    getKpiMetrics('TODAY'),
+    getKpiMetrics('THIS_WEEK'),
+    getKpiMetrics('THIS_MONTH'),
+    getDashboardAlerts(),
+  ]);
+
+  return { today, thisWeek, thisMonth, alerts };
+}
+
+export interface SubsidySummaryItem {
+  subsidyId: string;
+  orderId: string;
+  orderNumber: string;
+  customerName: string;
+  capacityKw: number;
+  status:
+    | 'NOT_STARTED'
+    | 'SUBMITTED'
+    | 'UNDER_INSPECTION'
+    | 'APPROVED'
+    | 'DISBURSED'
+    | 'REJECTED';
+  applicationRef: string | null;
+  expectedPaise: string;
+  receivedPaise: string;
+  submittedOn: string | null;
+  disbursedOn: string | null;
+}
+
+/**
+ * Subsidy application tracker for the Accounts screen (FR-4.8 / C11).
+ * Real rows from subsidy_applications joined to their orders + customers.
+ */
+export async function getSubsidySummary(status?: string): Promise<SubsidySummaryItem[]> {
+  const applications = await prisma.subsidyApplication.findMany({
+    where: status ? { status: status as any } : undefined,
+    include: {
+      order: {
+        include: { customer: { select: { name: true } } },
+      },
+    },
+    orderBy: { updated_at: 'desc' },
+    take: 200,
+  });
+
+  return applications.map((s) => ({
+    subsidyId: s.id,
+    orderId: s.order_id,
+    orderNumber: s.order.order_number,
+    customerName: s.order.customer?.name || 'Customer',
+    capacityKw: Number(s.order.capacity_kw),
+    status: s.status,
+    applicationRef: s.application_ref,
+    expectedPaise: s.expected_paise.toString(),
+    receivedPaise: s.received_paise.toString(),
+    submittedOn: s.submitted_on ? s.submitted_on.toISOString().split('T')[0] : null,
+    disbursedOn: s.disbursed_on ? s.disbursed_on.toISOString().split('T')[0] : null,
+  }));
 }

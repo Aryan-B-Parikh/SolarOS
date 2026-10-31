@@ -8,6 +8,7 @@ import { validateTransition } from '@/domain/state-machines/transitions';
 import { QuoteStatus, LeadStatus, OrderStatus, SystemType } from '@prisma/client';
 import { rupeesToPaise } from '@/lib/money';
 import { hashToken } from '@/lib/access-links';
+import { getTargetMarginBp } from '@/services/settings';
 import crypto from 'crypto';
 
 export interface CreateQuoteDto {
@@ -20,6 +21,9 @@ export interface CreateQuoteDto {
 }
 
 export async function createQuote(data: CreateQuoteDto, user?: { id: string; role: string }) {
+  // FR-3.8: target margin is configurable via the settings service (default 2000 bp).
+  const targetMarginBp = await getTargetMarginBp();
+
   return prisma.$transaction(async (tx) => {
     const lead = await tx.lead.findUnique({
       where: { id: data.leadId },
@@ -63,6 +67,9 @@ export async function createQuote(data: CreateQuoteDto, user?: { id: string; rol
         422
       );
     }
+    // FR-3.4: a DIRECTOR applying a discount above the sales limit IS the
+    // approving authority - stamp discount_approved_by on the quote.
+    const discountApprovedBy = user && user.role !== 'SALES' && discountPercent > 5 ? user.id : null;
 
     const netPricePaise = subtotalPaise - discountPaise;
 
@@ -102,7 +109,7 @@ export async function createQuote(data: CreateQuoteDto, user?: { id: string; rol
       netPricePaise,
       totalBomCostPaise: bomResult.totalCostPaise,
       labourAllowancePaise: template.labour_allowance_paise,
-      targetMarginBp: 2000, // 20%
+      targetMarginBp,
     });
 
     const quoteNumber = await getNextSequence('quote', undefined, tx);
@@ -127,6 +134,7 @@ export async function createQuote(data: CreateQuoteDto, user?: { id: string; rol
         subsidy_estimate_paise: subsidyEstimatePaise,
         estimated_margin_bp: margin.estimatedMarginBp,
         margin_warning: margin.marginWarning,
+        discount_approved_by: discountApprovedBy,
         valid_until: validUntil,
         created_by: user?.id || null,
         lines: {
@@ -145,7 +153,7 @@ export async function createQuote(data: CreateQuoteDto, user?: { id: string; rol
         entityType: 'QUOTE',
         entityId: quote.id,
         action: 'QUOTE_CREATED',
-        after: { quoteNumber, totalPaise: totalPaise.toString(), marginWarning: margin.marginWarning },
+        after: { quoteNumber, totalPaise: totalPaise.toString(), marginWarning: margin.marginWarning, discountApprovedBy },
       },
       tx
     );
@@ -231,9 +239,21 @@ export async function acceptQuote(
   return prisma.$transaction(async (tx) => {
     const quote = await tx.quote.findUnique({
       where: { id: quoteId },
-      include: { customer: true, lead: true, lines: true },
+      include: { customer: true, lead: true, lines: true, order: true },
     });
     if (!quote) throw new AppError('NOT_FOUND', 'Quote not found', 404);
+
+    // ── X-QUAL-IDEM: idempotent acceptance ────────────────────────────────
+    // Double-submit (client retry, duplicate tab, racing webhooks) must
+    // return the EXISTING order instead of creating a duplicate.
+    if (quote.status === QuoteStatus.ACCEPTED && quote.order) {
+      return {
+        success: true,
+        orderId: quote.order.id,
+        orderNumber: quote.order.order_number,
+        alreadyAccepted: true,
+      };
+    }
 
     // Phone verification
     const cleanPhone = quote.customer.phone.replace(/\D/g, '');
@@ -262,39 +282,68 @@ export async function acceptQuote(
       data: { status: LeadStatus.WON },
     });
 
-    // Create Order with snapshot (FR-4.1 / Section 4.1)
+    // Create Order with snapshot (FR-4.1 / Section 4.1) - guarded against
+    // a concurrent accept racing this transaction (orders.quote_id unique).
+    const existingOrder = await tx.order.findUnique({ where: { quote_id: quote.id } });
+    if (existingOrder) {
+      return {
+        success: true,
+        orderId: existingOrder.id,
+        orderNumber: existingOrder.order_number,
+        alreadyAccepted: true,
+      };
+    }
+
     const orderNumber = await getNextSequence('order', undefined, tx);
     const advanceRequiredPaise = BigInt(Math.round(Number(quote.total_paise) * 0.3)); // 30% advance (A2, Q1)
 
-    const order = await tx.order.create({
-      data: {
-        order_number: orderNumber,
-        quote_id: quote.id,
-        customer_id: quote.customer_id,
-        status: OrderStatus.PENDING_ADVANCE,
-        capacity_kw: quote.capacity_kw,
-        system_type: quote.system_type,
-        site_snapshot: {
-          address: quote.customer.address,
-          pincode: quote.customer.pincode,
-          cableDistanceM: Number(quote.cable_distance_m),
+    let order;
+    try {
+      order = await tx.order.create({
+        data: {
+          order_number: orderNumber,
+          quote_id: quote.id,
+          customer_id: quote.customer_id,
+          status: OrderStatus.PENDING_ADVANCE,
+          capacity_kw: quote.capacity_kw,
+          system_type: quote.system_type,
+          site_snapshot: {
+            address: quote.customer.address,
+            pincode: quote.customer.pincode,
+            cableDistanceM: Number(quote.cable_distance_m),
+          },
+          subtotal_paise: quote.subtotal_paise,
+          discount_paise: quote.discount_paise,
+          tax_paise: quote.tax_paise,
+          total_paise: quote.total_paise,
+          advance_required_paise: advanceRequiredPaise,
+          lines: {
+            create: quote.lines.map((l) => ({
+              product_id: l.product_id,
+              description: l.description,
+              qty: l.qty,
+              unit_price_paise: l.unit_price_paise,
+              tax_rate_bp: l.tax_rate_bp,
+            })),
+          },
         },
-        subtotal_paise: quote.subtotal_paise,
-        discount_paise: quote.discount_paise,
-        tax_paise: quote.tax_paise,
-        total_paise: quote.total_paise,
-        advance_required_paise: advanceRequiredPaise,
-        lines: {
-          create: quote.lines.map((l) => ({
-            product_id: l.product_id,
-            description: l.description,
-            qty: l.qty,
-            unit_price_paise: l.unit_price_paise,
-            tax_rate_bp: l.tax_rate_bp,
-          })),
-        },
-      },
-    });
+      });
+    } catch (err: any) {
+      // P2002 = unique violation on orders.quote_id: a concurrent request
+      // already created the order for this quote. Return that order.
+      if (err?.code === 'P2002') {
+        const raced = await tx.order.findUnique({ where: { quote_id: quote.id } });
+        if (raced) {
+          return {
+            success: true,
+            orderId: raced.id,
+            orderNumber: raced.order_number,
+            alreadyAccepted: true,
+          };
+        }
+      }
+      throw err;
+    }
 
     await recordAudit(
       {
@@ -600,6 +649,7 @@ export async function getQuoteById(id: string) {
       customer: true,
       lead: { include: { survey: true, assessment: true } },
       template: true,
+      discount_approver: { select: { id: true, name: true, role: true } },
       lines: {
         include: { product: true },
         orderBy: { sort_order: 'asc' },
@@ -623,6 +673,10 @@ export async function reviseQuote(
   data: ReviseQuoteDto = {},
   user?: { id: string; role: string }
 ) {
+  // FR-3.8: target margin is configurable via the settings service
+  // (key `target_margin_bp`, default 2000 bp = 20%).
+  const targetMarginBp = await getTargetMarginBp();
+
   return prisma.$transaction(async (tx) => {
     const oldQuote = await tx.quote.findUnique({
       where: { id: quoteId },
@@ -725,6 +779,15 @@ export async function reviseQuote(
         422
       );
     }
+    // FR-3.4: when a DIRECTOR applies a discount above the sales limit via a
+    // revision ("Approve discount & revise"), record them as the approver.
+    // Below-limit revisions inherit the previous approval stamp, if any.
+    const discountApprovedBy =
+      user && user.role !== 'SALES' && discountPercent > 5
+        ? user.id
+        : discountPercent <= 5
+        ? oldQuote.discount_approved_by
+        : null;
 
     const netPricePaise = subtotalPaise - discountPaise;
     const totalPaise = netPricePaise + totalTaxPaise;
@@ -734,7 +797,7 @@ export async function reviseQuote(
       netPricePaise,
       totalBomCostPaise,
       labourAllowancePaise: oldQuote.template?.labour_allowance_paise,
-      targetMarginBp: 2000,
+      targetMarginBp,
     });
 
     const validUntil = new Date(Date.now() + (data.validDays || 15) * 24 * 60 * 60 * 1000);
@@ -758,6 +821,7 @@ export async function reviseQuote(
         subsidy_estimate_paise: oldQuote.subsidy_estimate_paise,
         estimated_margin_bp: margin.estimatedMarginBp,
         margin_warning: margin.marginWarning,
+        discount_approved_by: discountApprovedBy,
         valid_until: validUntil,
         created_by: user?.id || null,
         lines: {
@@ -780,6 +844,7 @@ export async function reviseQuote(
           newQuoteNumber,
           version: nextVersion,
           supersededQuoteId: oldQuote.id,
+          discountApprovedBy,
         },
       },
       tx
@@ -794,6 +859,9 @@ export async function updateQuoteLine(
   data: { lineId: string; qty: number; manualReason: string },
   user?: { id: string; role: string }
 ) {
+  // FR-3.8: configurable target margin (default 2000 bp).
+  const targetMarginBp = await getTargetMarginBp();
+
   return prisma.$transaction(async (tx) => {
     const quote = await tx.quote.findUnique({
       where: { id: quoteId },
@@ -857,7 +925,7 @@ export async function updateQuoteLine(
       netPricePaise,
       totalBomCostPaise,
       labourAllowancePaise: quote.template?.labour_allowance_paise,
-      targetMarginBp: 2000,
+      targetMarginBp,
     });
 
     const updatedQuote = await tx.quote.update({

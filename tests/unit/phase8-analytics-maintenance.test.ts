@@ -23,6 +23,7 @@ import {
 import {
   createDashboardShareToken,
   verifyDashboardShareToken,
+  aggregateMaterialsCostPaise,
 } from '../../src/services/analytics.ts';
 
 describe('Phase 8 - Financial Math & Project Profitability (Spec 6.3, Rule C10)', () => {
@@ -119,6 +120,34 @@ describe('Phase 8 - Financial Math & Project Profitability (Spec 6.3, Rule C10)'
     assert.equal(lossResult.installProfitPaise, -2000000n);
     assert.equal(lossResult.isLoss, true, 'Loss-making project must have isLoss = true');
     assert.ok(lossResult.marginBp < 0, 'Margin basis points must be negative');
+  });
+
+  it('counts serialized unit cost ONCE in KPI material aggregation (FR-8.2 double-count fix)', () => {
+    // Dispatch flow fixture: one bulk DISPATCH line movement covering 7 items
+    // (avg cost Rs 1,000 each), then two per-unit DELIVERY movements for the
+    // serialized units (already priced inside the DISPATCH line), plus one
+    // serialized RETURN credit.
+    const movements = [
+      { type: 'DISPATCH', qty: 7, unit_cost_paise: 100000n, unit_id: null },
+      { type: 'DELIVERY', qty: 1, unit_cost_paise: 100000n, unit_id: 'unit-1' },
+      { type: 'DELIVERY', qty: 1, unit_cost_paise: 100000n, unit_id: 'unit-2' },
+      { type: 'RETURN', qty: 1, unit_cost_paise: 50000n, unit_id: 'unit-3' },
+    ];
+
+    // Correct total: 7 x 100,000 (DISPATCH, counted once) - 50,000 (return)
+    // = 650,000 paise. The DELIVERY rows must NOT add another 200,000.
+    assert.equal(
+      aggregateMaterialsCostPaise(movements),
+      650000n,
+      'Serialized DELIVERY movements with a unit_id must not double-count the DISPATCH cost'
+    );
+  });
+
+  it('still counts bulk (non-serialized) DELIVERY movements in KPI material aggregation', () => {
+    const movements = [
+      { type: 'DELIVERY', qty: 3, unit_cost_paise: 200000n, unit_id: null },
+    ];
+    assert.equal(aggregateMaterialsCostPaise(movements), 600000n);
   });
 });
 

@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { 
   Plus, PhoneCall, Globe, MessageSquare, MapPin, 
-  Clock, AlertTriangle, ShieldAlert, User, Search, X
+  Clock, AlertTriangle, ShieldAlert, User, Search, X, Calendar
 } from 'lucide-react';
 import { StageChip } from '@/components/StageChip';
 import { MoneyText } from '@/components/MoneyText';
@@ -14,14 +14,23 @@ import clsx from 'clsx';
 interface LeadBoardClientProps {
   salesUsers: { id: string; name: string }[];
   initialLeads: any[];
+  technicians?: any[];
 }
 
-export default function LeadBoardClient({ salesUsers, initialLeads }: LeadBoardClientProps) {
+export default function LeadBoardClient({ salesUsers, initialLeads, technicians = [] }: LeadBoardClientProps) {
   const router = useRouter();
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedOwner, setSelectedOwner] = useState<string>('ALL');
   const [searchTerm, setSearchTerm] = useState('');
   const [loading, setLoading] = useState(false);
+
+  // Book Survey modal state (FR-2.2)
+  const [surveyLead, setSurveyLead] = useState<any | null>(null);
+  const [surveyForm, setSurveyForm] = useState({
+    surveyorId: technicians[0]?.user_id || '',
+    scheduledAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString().slice(0, 16),
+  });
+  const [surveySubmitting, setSurveySubmitting] = useState(false);
 
   // Quick Enquiry Form state
   const [formData, setFormData] = useState({
@@ -46,8 +55,6 @@ export default function LeadBoardClient({ salesUsers, initialLeads }: LeadBoardC
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'x-user-role': 'SALES',
-          'x-user-id': formData.ownerId,
         },
         body: JSON.stringify({
           name: formData.name,
@@ -150,6 +157,48 @@ export default function LeadBoardClient({ salesUsers, initialLeads }: LeadBoardC
     if (lead.status !== 'NEW') return false;
     if (!lead.sla_due_at) return false;
     return new Date(lead.sla_due_at).getTime() < Date.now();
+  };
+
+  // FR-2.2: open the Book Survey modal for a QUALIFIED lead.
+  const openBookSurvey = (e: React.MouseEvent, lead: any) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setSurveyLead(lead);
+    setSurveyForm({
+      surveyorId: technicians[0]?.user_id || '',
+      scheduledAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString().slice(0, 16),
+    });
+  };
+
+  const handleBookSurvey = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!surveyLead) return;
+    if (!surveyForm.surveyorId || !surveyForm.scheduledAt) {
+      alert('Select a surveyor and a date/time.');
+      return;
+    }
+    setSurveySubmitting(true);
+    try {
+      const res = await fetch(`/api/v1/leads/${surveyLead.id}/surveys`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          surveyorId: surveyForm.surveyorId,
+          scheduledAt: new Date(surveyForm.scheduledAt).toISOString(),
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        alert(err.error?.message || 'Failed to book survey');
+        return;
+      }
+      setSurveyLead(null);
+      router.refresh();
+    } catch (err: any) {
+      alert(err.message || 'Error booking survey');
+    } finally {
+      setSurveySubmitting(false);
+    }
   };
 
   return (
@@ -267,6 +316,18 @@ export default function LeadBoardClient({ salesUsers, initialLeads }: LeadBoardC
                               {lead.owner?.name ? lead.owner.name.split(' ')[0] : 'Unassigned'}
                             </span>
                           </div>
+
+                          {/* Quick Book Survey action (FR-2.2) */}
+                          {lead.status === 'QUALIFIED' && (
+                            <button
+                              type="button"
+                              onClick={(e) => openBookSurvey(e, lead)}
+                              className="mt-2 w-full py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-[11px] font-bold flex items-center justify-center gap-1.5 transition-colors"
+                            >
+                              <Calendar className="w-3.5 h-3.5" />
+                              <span>Book Survey</span>
+                            </button>
+                          )}
 
                           {/* Duplicate Flag Alert */}
                           {hasDuplicates && (
@@ -446,6 +507,82 @@ export default function LeadBoardClient({ salesUsers, initialLeads }: LeadBoardC
                   className="px-4 py-2 text-xs font-semibold rounded-lg bg-blue-600 hover:bg-blue-700 text-white shadow-sm focus:ring-2 focus:ring-blue-500"
                 >
                   {loading ? 'Creating...' : 'Create Lead & Start SLA'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+      {/* Book Survey Modal (FR-2.2) */}
+      {surveyLead && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/50 backdrop-blur-xs animate-in fade-in">
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-xl w-full max-w-md p-6">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                <Calendar className="w-5 h-5 text-blue-600" />
+                <span>Book Site Survey</span>
+              </h2>
+              <button
+                type="button"
+                onClick={() => setSurveyLead(null)}
+                className="text-slate-400 hover:text-slate-600 p-1 rounded-lg"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <p className="text-xs text-slate-500 mt-3">
+              Lead <span className="font-mono font-semibold text-slate-700">{surveyLead.lead_number}</span> &bull;{' '}
+              {surveyLead.customer?.name} &bull; {surveyLead.requested_capacity_kw || 3} kW
+            </p>
+
+            <form onSubmit={handleBookSurvey} className="space-y-4 mt-3">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Surveyor *</label>
+                <select
+                  required
+                  value={surveyForm.surveyorId}
+                  onChange={(e) => setSurveyForm({ ...surveyForm, surveyorId: e.target.value })}
+                  className="w-full px-2.5 py-2 text-xs border border-slate-300 rounded-lg bg-white"
+                >
+                  <option value="">Select a surveyor&hellip;</option>
+                  {technicians.map((t: any) => (
+                    <option key={t.user_id} value={t.user_id}>
+                      {t.user?.name || 'Technician'}
+                      {t.skills?.includes('SURVEY') ? ' (Survey skilled)' : ''}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Scheduled Date &amp; Time *</label>
+                <input
+                  type="datetime-local"
+                  required
+                  value={surveyForm.scheduledAt}
+                  onChange={(e) => setSurveyForm({ ...surveyForm, scheduledAt: e.target.value })}
+                  className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg"
+                />
+                <span className="text-[10px] text-slate-400">
+                  Business hours (09:00-18:00 IST, Mon-Sat) recommended. The lead moves to SURVEY_SCHEDULED.
+                </span>
+              </div>
+
+              <div className="flex justify-end gap-3 pt-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setSurveyLead(null)}
+                  className="px-4 py-2 text-xs font-semibold rounded-lg text-slate-600 hover:bg-slate-100"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={surveySubmitting}
+                  className="px-4 py-2 text-xs font-semibold rounded-lg bg-blue-600 hover:bg-blue-700 text-white shadow-sm disabled:opacity-60"
+                >
+                  {surveySubmitting ? 'Booking...' : 'Book Survey'}
                 </button>
               </div>
             </form>

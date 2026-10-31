@@ -19,6 +19,7 @@ export default async function ReceivePage({
         category: true,
         is_serialized: true,
         uom: true,
+        warranty_months: true,
       },
       orderBy: { name: 'asc' },
     }),

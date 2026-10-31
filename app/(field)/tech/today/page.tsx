@@ -1,6 +1,9 @@
 import React from 'react';
 import Link from 'next/link';
 import { prisma } from '@/lib/db';
+import { getSessionUser } from '@/lib/session';
+import { getISTDayRange } from '@/lib/dates';
+import { buildMapUrl } from '@/lib/map';
 import {
   Calendar,
   Clock,
@@ -19,8 +22,24 @@ import { OfflineBanner } from '@/components/OfflineBanner';
 export const dynamic = 'force-dynamic';
 
 export default async function TechTodayPage() {
+  const user = await getSessionUser();
+  const { start: todayStart, end: todayEnd } = getISTDayRange();
+
+  // Today's installations, scoped to the signed-in technician (FR-6.1)
+  const isTech = user?.role === 'TECHNICIAN';
   const [installations, surveys] = await Promise.all([
     prisma.installation.findMany({
+      where: {
+        scheduled_on: { gte: todayStart, lte: todayEnd },
+        ...(isTech
+          ? {
+              OR: [
+                { crew_lead_id: user!.id },
+                { crew: { some: { technician_id: user!.id } } },
+              ],
+            }
+          : {}),
+      },
       include: {
         order: {
           include: {
@@ -28,13 +47,18 @@ export default async function TechTodayPage() {
           },
         },
         crew_lead: true,
+        crew: { include: { technician: { include: { user: { select: { id: true, name: true } } } } } },
       },
       orderBy: { scheduled_on: 'asc' },
       take: 20,
     }),
     prisma.siteSurvey.findMany({
+      where: {
+        scheduled_at: { gte: todayStart, lte: todayEnd },
+        ...(isTech ? { surveyor_id: user!.id } : {}),
+      },
       include: {
-        lead: true,
+        lead: { include: { customer: true } },
         surveyor: true,
       },
       orderBy: { scheduled_at: 'asc' },
@@ -111,8 +135,17 @@ export default async function TechTodayPage() {
                 <div className="space-y-1 text-xs text-slate-600">
                   <div className="flex items-center gap-1.5">
                     <MapPin className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                    <span>{customer?.address_line1}, {customer?.city}</span>
+                    <span className="flex-1">{customer?.address}, {customer?.city}</span>
                   </div>
+                  <a
+                    href={buildMapUrl(customer?.address, customer?.city, customer?.pincode)}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1.5 text-orange-600 font-semibold hover:underline"
+                  >
+                    <MapPin className="w-3.5 h-3.5" />
+                    <span>Open in Maps</span>
+                  </a>
                   {customer?.phone && (
                     <div className="flex items-center gap-1.5">
                       <Phone className="w-3.5 h-3.5 text-slate-400 shrink-0" />
@@ -155,6 +188,9 @@ export default async function TechTodayPage() {
           surveys.map((survey) => {
             const lead = survey.lead;
             const isApproved = survey.status === 'APPROVED';
+            const monthlyBillRupees = lead?.monthly_bill_paise
+              ? Math.round(Number(lead.monthly_bill_paise) / 100)
+              : null;
 
             return (
               <div
@@ -163,10 +199,10 @@ export default async function TechTodayPage() {
               >
                 <div className="flex justify-between items-start">
                   <div>
-                    <h3 className="text-base font-bold text-slate-900">{lead?.name || 'Lead Site'}</h3>
+                    <h3 className="text-base font-bold text-slate-900">{lead?.customer?.name || 'Lead Site'}</h3>
                     <div className="text-xs text-slate-500 flex items-center gap-1 mt-0.5">
                       <MapPin className="w-3.5 h-3.5 text-slate-400" />
-                      <span>{lead?.city} · Monthly Bill Rs. {lead?.monthly_bill_inr || '-'}</span>
+                      <span>{lead?.customer?.city} · Monthly Bill Rs. {monthlyBillRupees ?? '-'}</span>
                     </div>
                   </div>
                   <span
