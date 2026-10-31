@@ -1,0 +1,17 @@
+{
+  "extends": ["next/core-web-vitals"],
+  "rules": {
+    "no-restricted-imports": [
+      "error",
+      {
+        "patterns": [
+          {
+            "group": ["**/services/*/*", "../../*/*/services"],
+            "message": "Enforce module boundaries: Access other modules only through their top-level service public API."
+          }
+        ]
+      }
+    ]
+  }
+}
+

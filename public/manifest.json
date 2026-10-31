@@ -1,0 +1,32 @@
+﻿{
+  "name": "SunPower Field",
+  "short_name": "SunPower",
+  "description": "SunPower Ops field technician app — surveys, installations, QR scanning",
+  "start_url": "/tech/today",
+  "display": "standalone",
+  "orientation": "portrait",
+  "theme_color": "#f97316",
+  "background_color": "#ffffff",
+  "lang": "en-IN",
+  "scope": "/",
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ],
+  "shortcuts": [
+    {
+      "name": "Today's Jobs",
+      "short_name": "Today",
+      "url": "/tech/today",
+      "icons": [{ "src": "/icons/shortcut-today.png", "sizes": "96x96" }]
+    },
+    {
+      "name": "Scan Unit",
+      "short_name": "Scan",
+      "url": "/tech/scan",
+      "icons": [{ "src": "/icons/shortcut-scan.png", "sizes": "96x96" }]
+    }
+  ],
+  "categories": ["business", "utilities"],
+  "prefer_related_applications": false
+}

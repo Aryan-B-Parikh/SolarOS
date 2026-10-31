@@ -1,0 +1,1579 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// ==========================================
+// 1. IDENTITY & CONFIGURATION
+// ==========================================
+
+enum UserRole {
+  DIRECTOR
+  SALES
+  TECHNICIAN
+  WAREHOUSE
+  SUPPORT
+  ACCOUNTS
+}
+
+model User {
+  id             String      @id @default(uuid()) @db.Uuid
+  name           String
+  email          String      @unique
+  phone          String?
+  password_hash  String
+  role           UserRole
+  is_active      Boolean     @default(true)
+  last_login_at  DateTime?   @db.Timestamptz()
+  created_at     DateTime    @default(now()) @db.Timestamptz()
+  updated_at     DateTime    @updatedAt @db.Timestamptz()
+
+  // Relations
+  sessions             Session[]
+  technician_profile   Technician?
+  owned_leads          Lead[]                 @relation("LeadOwner")
+  activities           LeadActivity[]
+  resolved_flags       LeadDuplicateFlag[]
+  surveys_conducted    SiteSurvey[]           @relation("Surveyor")
+  surveys_reviewed     SiteSurvey[]           @relation("SurveyReviewer")
+  quotes_discount_auth Quote[]                @relation("DiscountApprover")
+  quotes_created       Quote[]                @relation("QuoteCreator")
+  orders_overridden    Order[]                @relation("OrderOverride")
+  payments_recorded    Payment[]
+  expenses_recorded    Expense[]
+  stock_movements      StockMovement[]
+  purchase_orders      PurchaseOrder[]
+  purchase_receipts    PurchaseReceipt[]
+  scanned_units        DispatchUnit[]
+  crews_led            Installation[]         @relation("CrewLead")
+  assigned_tickets     ServiceTicket[]        @relation("AssignedTicket")
+  created_tickets      ServiceTicket[]        @relation("TicketCreator")
+  warranties_voided    Warranty[]             @relation("WarrantyVoider")
+  ticket_events        TicketEvent[]
+  attachments          Attachment[]
+  share_links          ShareLink[]
+  access_links_created CustomerAccessLink[]
+  settings_updated     Setting[]
+
+  @@map("users")
+}
+
+model Session {
+  id         String    @id @default(uuid()) @db.Uuid
+  user_id    String    @db.Uuid
+  token      String    @unique
+  expires_at DateTime  @db.Timestamptz()
+  created_at DateTime  @default(now()) @db.Timestamptz()
+
+  user User @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+}
+
+model Technician {
+  user_id           String   @id @db.Uuid
+  skills            String[] // SURVEY, ONGRID, OFFGRID_BATTERY, ELECTRICAL_LEAD
+  base_lat          Decimal? @db.Decimal(10, 7)
+  base_lng          Decimal? @db.Decimal(10, 7)
+  hourly_cost_paise BigInt   @default(0)
+  max_jobs_per_day  Int      @default(2)
+  is_crew_lead      Boolean  @default(false)
+
+  user              User               @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  leaves            TechnicianLeave[]
+  installation_crew InstallationCrew[]
+  time_logs         TimeLog[]
+
+  @@map("technicians")
+}
+
+model TechnicianLeave {
+  id            String     @id @default(uuid()) @db.Uuid
+  technician_id String     @db.Uuid
+  starts_on     DateTime   @db.Date
+  ends_on       DateTime   @db.Date
+  reason        String?
+  created_at    DateTime   @default(now()) @db.Timestamptz()
+
+  technician Technician @relation(fields: [technician_id], references: [user_id], onDelete: Cascade)
+
+  @@map("technician_leave")
+}
+
+model Setting {
+  key        String   @id
+  value      Json
+  updated_by String?  @db.Uuid
+  updated_at DateTime @default(now()) @updatedAt @db.Timestamptz()
+
+  updater User? @relation(fields: [updated_by], references: [id])
+
+  @@map("settings")
+}
+
+model NumberSequence {
+  name       String
+  year       Int
+  next_value Int      @default(1)
+
+  @@id([name, year])
+  @@map("number_sequences")
+}
+
+// ==========================================
+// 2. CUSTOMERS & CRM (LEADS)
+// ==========================================
+
+enum CustomerType {
+  RESIDENTIAL
+  COMMERCIAL
+  INDUSTRIAL
+}
+
+enum LinkScope {
+  PORTAL
+  QUOTE
+  CERTIFICATE
+}
+
+model Customer {
+  id              String       @id @default(uuid()) @db.Uuid
+  customer_number String       @unique
+  name            String
+  phone           String       @unique // E.164
+  email           String?
+  address         String
+  address_line2   String?
+  city            String       @default("Ahmedabad")
+  state           String       @default("Gujarat")
+  pincode         String
+  lat             Decimal?     @db.Decimal(10, 7)
+  lng             Decimal?     @db.Decimal(10, 7)
+  type            CustomerType @default(RESIDENTIAL)
+  consumer_no     String?
+  discom          String?
+  consent_at      DateTime     @default(now()) @db.Timestamptz()
+  created_at      DateTime     @default(now()) @db.Timestamptz()
+  updated_at      DateTime     @updatedAt @db.Timestamptz()
+
+  leads           Lead[]
+  quotes          Quote[]
+  orders          Order[]
+  invoices        Invoice[]
+  inventory_units InventoryUnit[]
+  warranties      Warranty[]
+  service_tickets ServiceTicket[]
+  access_links    CustomerAccessLink[]
+  matched_flags   LeadDuplicateFlag[]
+
+  @@index([name])
+  @@map("customers")
+}
+
+model CustomerAccessLink {
+  id              String    @id @default(uuid()) @db.Uuid
+  customer_id     String    @db.Uuid
+  scope           LinkScope
+  token_hash      String    @unique
+  expires_at      DateTime  @db.Timestamptz()
+  revoked_at      DateTime? @db.Timestamptz()
+  last_used_at    DateTime? @db.Timestamptz()
+  failed_attempts Int       @default(0)
+  locked_until    DateTime? @db.Timestamptz()
+  created_by      String?   @db.Uuid
+  created_at      DateTime  @default(now()) @db.Timestamptz()
+
+  customer Customer @relation(fields: [customer_id], references: [id], onDelete: Restrict)
+  creator  User?    @relation(fields: [created_by], references: [id])
+
+  @@index([customer_id])
+  @@map("customer_access_links")
+}
+
+enum LeadSource {
+  WEB
+  WHATSAPP
+  PHONE
+  WALK_IN
+  REFERRAL
+}
+
+enum LeadStatus {
+  NEW
+  CONTACTED
+  QUALIFIED
+  SURVEY_SCHEDULED
+  SURVEY_APPROVED
+  QUOTED
+  WON
+  LOST
+  DISQUALIFIED
+}
+
+enum SystemType {
+  ON_GRID
+  OFF_GRID
+  HYBRID
+}
+
+model Lead {
+  id                    String      @id @default(uuid()) @db.Uuid
+  lead_number           String      @unique
+  customer_id           String      @db.Uuid
+  source                LeadSource
+  status                LeadStatus  @default(NEW)
+  owner_id              String?     @db.Uuid
+  requested_capacity_kw Decimal?    @db.Decimal(4, 2)
+  system_type_pref      SystemType? @default(ON_GRID)
+  wants_subsidy         Boolean     @default(false)
+  monthly_bill_paise    BigInt?
+  monthly_units         Decimal?    @db.Decimal(10, 2)
+  tariff_paise          BigInt?     @default(700)
+  roof_area_sqm         Decimal?    @db.Decimal(10, 2)
+  grid_ok               Boolean?
+  sanctioned_load_kw    Decimal?    @db.Decimal(5, 2)
+  phase                 String?     // SINGLE, THREE
+  lost_reason           String?
+  first_contacted_at    DateTime?   @db.Timestamptz()
+  sla_due_at            DateTime?   @db.Timestamptz()
+  created_at            DateTime    @default(now()) @db.Timestamptz()
+  updated_at            DateTime    @updatedAt @db.Timestamptz()
+
+  customer        Customer            @relation(fields: [customer_id], references: [id], onDelete: Restrict)
+  owner           User?               @relation("LeadOwner", fields: [owner_id], references: [id])
+  activities      LeadActivity[]
+  duplicate_flags LeadDuplicateFlag[] @relation("LeadFlags")
+  matched_in_flag LeadDuplicateFlag[] @relation("MatchedLeadFlags")
+  survey          SiteSurvey?
+  assessment      SiteAssessment?
+  quotes          Quote[]
+
+  @@index([status, owner_id])
+  @@map("leads")
+}
+
+enum LeadActivityType {
+  CALL
+  NOTE
+  STATUS_CHANGE
+  SURVEY_BOOKED
+  QUOTE_SENT
+}
+
+model LeadActivity {
+  id         String           @id @default(uuid()) @db.Uuid
+  lead_id    String           @db.Uuid
+  type       LeadActivityType
+  body       String
+  actor_id   String?          @db.Uuid
+  created_at DateTime         @default(now()) @db.Timestamptz()
+
+  lead  Lead  @relation(fields: [lead_id], references: [id], onDelete: Cascade)
+  actor User? @relation(fields: [actor_id], references: [id])
+
+  @@index([lead_id, created_at])
+  @@map("lead_activities")
+}
+
+enum DuplicateReason {
+  ADDRESS
+}
+
+enum DuplicateFlagStatus {
+  OPEN
+  LINKED
+  DISMISSED
+}
+
+model LeadDuplicateFlag {
+  id                  String              @id @default(uuid()) @db.Uuid
+  lead_id             String              @db.Uuid
+  matched_customer_id String              @db.Uuid
+  matched_lead_id     String?             @db.Uuid
+  reason              DuplicateReason     @default(ADDRESS)
+  score               Decimal             @db.Decimal(4, 3)
+  status              DuplicateFlagStatus @default(OPEN)
+  resolved_by         String?             @db.Uuid
+  resolved_at         DateTime?           @db.Timestamptz()
+  created_at          DateTime            @default(now()) @db.Timestamptz()
+
+  lead             Lead     @relation("LeadFlags", fields: [lead_id], references: [id], onDelete: Cascade)
+  matched_customer Customer @relation(fields: [matched_customer_id], references: [id], onDelete: Restrict)
+  matched_lead     Lead?    @relation("MatchedLeadFlags", fields: [matched_lead_id], references: [id])
+  resolver         User?    @relation(fields: [resolved_by], references: [id])
+
+  @@index([status])
+  @@map("lead_duplicate_flags")
+}
+
+// ==========================================
+// 3. SURVEY & SITE ASSESSMENT
+// ==========================================
+
+enum SurveyStatus {
+  SCHEDULED
+  COMPLETED
+  APPROVED
+  REJECTED
+}
+
+enum RoofType {
+  RCC_FLAT
+  TIN_SHED
+  TILED
+  OTHER
+}
+
+enum ShadingLevel {
+  NONE
+  LOW
+  MEDIUM
+  HIGH
+}
+
+model SiteSurvey {
+  id                 String       @id @default(uuid()) @db.Uuid
+  lead_id            String       @unique @db.Uuid
+  surveyor_id        String?      @db.Uuid
+  status             SurveyStatus @default(SCHEDULED)
+  scheduled_at       DateTime     @db.Timestamptz()
+  completed_at       DateTime?    @db.Timestamptz()
+  roof_type          RoofType     @default(RCC_FLAT)
+  azimuth_deg        Int          @default(180) // 0 to 359
+  tilt_deg           Int          @default(20)  // 0 to 90
+  usable_area_sqm    Decimal      @db.Decimal(8, 2)
+  shading            ShadingLevel @default(NONE)
+  cable_distance_m   Decimal      @default(25) @db.Decimal(6, 2)
+  structure_height_m Decimal?     @db.Decimal(5, 2)
+  notes              String?
+  reviewed_by        String?      @db.Uuid
+  reviewed_at        DateTime?    @db.Timestamptz()
+  rejection_reason   String?
+  created_at         DateTime     @default(now()) @db.Timestamptz()
+  updated_at         DateTime     @updatedAt @db.Timestamptz()
+
+  lead        Lead            @relation(fields: [lead_id], references: [id], onDelete: Restrict)
+  surveyor    User?           @relation("Surveyor", fields: [surveyor_id], references: [id])
+  reviewer    User?           @relation("SurveyReviewer", fields: [reviewed_by], references: [id])
+  assessments SiteAssessment[]
+  time_logs   TimeLog[]
+
+  @@map("site_surveys")
+}
+
+model SiteAssessment {
+  id                   String     @id @default(uuid()) @db.Uuid
+  lead_id              String     @unique @db.Uuid
+  survey_id            String?    @db.Uuid
+  inputs               Json
+  recommended_kw       Decimal    @db.Decimal(4, 2)
+  recommended_type     SystemType @default(ON_GRID)
+  annual_generation_kwh Decimal   @db.Decimal(10, 2)
+  annual_savings_paise BigInt
+  payback_years        Decimal    @db.Decimal(4, 1)
+  flags                String[]
+  ai_summary           String?
+  ai_risks             Json?
+  ai_model             String?
+  prompt_version       String?
+  photo_findings       Json?
+  photo_model          String?
+  created_at           DateTime   @default(now()) @db.Timestamptz()
+  updated_at           DateTime   @updatedAt @db.Timestamptz()
+
+  lead   Lead        @relation(fields: [lead_id], references: [id], onDelete: Restrict)
+  survey SiteSurvey? @relation(fields: [survey_id], references: [id])
+
+  @@map("site_assessments")
+}
+
+// ==========================================
+// 4. CATALOGUE & BOM TEMPLATES
+// ==========================================
+
+enum ProductCategory {
+  SOLAR_PANEL
+  INVERTER
+  BATTERY
+  CHARGE_CONTROLLER
+  STRUCTURE
+  CABLE
+  ACDB
+  DCDB
+  EARTHING
+  LIGHTNING_ARRESTER
+  CONNECTOR
+  ACCESSORY
+  SERVICE
+}
+
+enum WarrantyStartBasis {
+  DELIVERY
+  INSTALLATION_SIGNOFF
+}
+
+model Product {
+  id                   String             @id @default(uuid()) @db.Uuid
+  sku                  String             @unique
+  name                 String
+  category             ProductCategory
+  brand                String
+  model                String
+  uom                  String             @default("NOS") // NOS, METER, SET
+  is_serialized        Boolean            @default(false)
+  warranty_months      Int                @default(0)
+  warranty_start_basis WarrantyStartBasis @default(DELIVERY)
+  rated_power_w        Int?
+  specs                Json?
+  hsn_code             String?
+  tax_rate_bp          Int                @default(1800) // Basis points e.g. 1800 = 18%
+  std_cost_paise       BigInt             @default(0)
+  sale_price_paise     BigInt             @default(0)
+  reorder_level        Decimal            @default(0) @db.Decimal(12, 3)
+  monitoring_url       String?
+  is_active            Boolean            @default(true)
+  created_at           DateTime           @default(now()) @db.Timestamptz()
+  updated_at           DateTime           @updatedAt @db.Timestamptz()
+
+  system_templates       SystemTemplate[]        @relation("PanelProduct")
+  bom_lines              TemplateBomLine[]
+  quote_lines            QuoteLine[]
+  order_lines            OrderLine[]
+  stock_levels           StockLevel[]
+  stock_movements        StockMovement[]
+  po_lines               PurchaseOrderLine[]
+  receipt_lines          PurchaseReceiptLine[]
+  inventory_units        InventoryUnit[]
+  allocations            StockAllocation[]
+  dispatch_lines         DispatchLine[]
+  warranties             Warranty[]
+  ticket_parts           TicketPart[]
+  invoice_lines          InvoiceLine[]
+
+  @@map("products")
+}
+
+model SystemTemplate {
+  id                       String     @id @default(uuid()) @db.Uuid
+  code                     String     @unique // e.g. ONG3KW
+  name                     String
+  system_type              SystemType @default(ON_GRID)
+  capacity_kw              Decimal    @db.Decimal(4, 2)
+  panel_product_id         String     @db.Uuid
+  default_cable_distance_m Decimal    @default(25) @db.Decimal(6, 2)
+  labour_allowance_paise   BigInt     @default(0)
+  price_override_paise     BigInt?
+  is_active                Boolean    @default(true)
+  version                  Int        @default(1)
+  created_at               DateTime   @default(now()) @db.Timestamptz()
+  updated_at               DateTime   @updatedAt @db.Timestamptz()
+
+  panel_product Product           @relation("PanelProduct", fields: [panel_product_id], references: [id])
+  bom_lines     TemplateBomLine[]
+  quotes        Quote[]
+
+  @@map("system_templates")
+}
+
+enum BomRule {
+  FIXED
+  PANEL_COUNT
+  PER_PANEL
+  PER_KW
+  PER_CABLE_METER
+  MANUAL
+}
+
+model TemplateBomLine {
+  id          String   @id @default(uuid()) @db.Uuid
+  template_id String   @db.Uuid
+  product_id  String   @db.Uuid
+  rule        BomRule
+  value       Decimal  @db.Decimal(10, 3)
+  allowance   Decimal  @default(0) @db.Decimal(10, 3)
+  sort_order  Int      @default(0)
+
+  template SystemTemplate @relation(fields: [template_id], references: [id], onDelete: Cascade)
+  product  Product        @relation(fields: [product_id], references: [id], onDelete: Restrict)
+
+  @@unique([template_id, product_id])
+  @@map("template_bom_lines")
+}
+
+enum FaultPriority {
+  LOW
+  NORMAL
+  HIGH
+  URGENT
+}
+
+model FaultCode {
+  id               String        @id @default(uuid()) @db.Uuid
+  code             String
+  product_model    String
+  description      String
+  default_priority FaultPriority @default(NORMAL)
+
+  @@unique([product_model, code])
+  @@map("fault_codes")
+}
+
+// ==========================================
+// 5. SALES & QUOTATIONS
+// ==========================================
+
+enum QuoteStatus {
+  DRAFT
+  SENT
+  ACCEPTED
+  REJECTED
+  EXPIRED
+  SUPERSEDED
+}
+
+model Quote {
+  id                    String      @id @default(uuid()) @db.Uuid
+  quote_number          String      @unique
+  lead_id               String      @db.Uuid
+  customer_id           String      @db.Uuid
+  template_id           String?     @db.Uuid
+  version               Int         @default(1)
+  supersedes_id         String?     @db.Uuid
+  status                QuoteStatus @default(DRAFT)
+  capacity_kw           Decimal     @db.Decimal(4, 2)
+  system_type           SystemType  @default(ON_GRID)
+  cable_distance_m      Decimal     @default(25) @db.Decimal(6, 2)
+  subtotal_paise        BigInt
+  discount_paise        BigInt      @default(0)
+  tax_paise             BigInt
+  total_paise           BigInt
+  subsidy_estimate_paise BigInt     @default(0)
+  estimated_margin_bp   Int         @default(0)
+  margin_warning        Boolean     @default(false)
+  discount_approved_by  String?     @db.Uuid
+  valid_until           DateTime    @db.Date
+  public_token_hash     String?     @unique
+  sent_at               DateTime?   @db.Timestamptz()
+  accepted_at           DateTime?   @db.Timestamptz()
+  accepted_name         String?
+  rejected_at           DateTime?   @db.Timestamptz()
+  reject_reason         String?
+  created_by            String?     @db.Uuid
+  created_at            DateTime    @default(now()) @db.Timestamptz()
+  updated_at            DateTime    @updatedAt @db.Timestamptz()
+
+  lead              Lead            @relation(fields: [lead_id], references: [id], onDelete: Restrict)
+  customer          Customer        @relation(fields: [customer_id], references: [id], onDelete: Restrict)
+  template          SystemTemplate? @relation(fields: [template_id], references: [id])
+  discount_approver User?           @relation("DiscountApprover", fields: [discount_approved_by], references: [id])
+  creator           User?           @relation("QuoteCreator", fields: [created_by], references: [id])
+  lines             QuoteLine[]
+  order             Order?
+
+  @@unique([lead_id, version])
+  @@map("quotes")
+}
+
+model QuoteLine {
+  id               String   @id @default(uuid()) @db.Uuid
+  quote_id         String   @db.Uuid
+  product_id       String   @db.Uuid
+  description      String
+  qty              Decimal  @db.Decimal(12, 3)
+  unit_price_paise BigInt
+  tax_rate_bp      Int      @default(1800)
+  line_total_paise BigInt
+  rule             BomRule  @default(FIXED)
+  is_manual        Boolean  @default(false)
+  manual_reason    String?
+  sort_order       Int      @default(0)
+
+  quote   Quote   @relation(fields: [quote_id], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [product_id], references: [id], onDelete: Restrict)
+
+  @@map("quote_lines")
+}
+
+// ==========================================
+// 6. FINANCE, ORDERS & SUBSIDY
+// ==========================================
+
+enum OrderStatus {
+  PENDING_ADVANCE
+  CONFIRMED
+  READY_TO_DISPATCH
+  DISPATCHED
+  DELIVERED
+  INSTALLED
+  CLOSED
+  CANCELLED
+}
+
+model Order {
+  id                    String      @id @default(uuid()) @db.Uuid
+  order_number          String      @unique
+  quote_id              String      @unique @db.Uuid
+  customer_id           String      @db.Uuid
+  status                OrderStatus @default(PENDING_ADVANCE)
+  capacity_kw           Decimal     @db.Decimal(4, 2)
+  system_type           SystemType  @default(ON_GRID)
+  site_snapshot         Json
+  subtotal_paise        BigInt
+  discount_paise        BigInt      @default(0)
+  tax_paise             BigInt
+  total_paise           BigInt
+  advance_required_paise BigInt
+  paid_paise            BigInt      @default(0)
+  confirmed_at          DateTime?   @db.Timestamptz()
+  override_by           String?     @db.Uuid
+  cancel_reason         String?
+  created_at            DateTime    @default(now()) @db.Timestamptz()
+  updated_at            DateTime    @updatedAt @db.Timestamptz()
+
+  quote           Quote               @relation(fields: [quote_id], references: [id], onDelete: Restrict)
+  customer        Customer            @relation(fields: [customer_id], references: [id], onDelete: Restrict)
+  overrider       User?               @relation("OrderOverride", fields: [override_by], references: [id])
+  lines           OrderLine[]
+  payments        Payment[]
+  invoices        Invoice[]
+  expenses        Expense[]
+  dispatches      Dispatch[]
+  installation    Installation?
+  subsidy         SubsidyApplication?
+  inventory_units InventoryUnit[]
+
+  @@map("orders")
+}
+
+model OrderLine {
+  id               String   @id @default(uuid()) @db.Uuid
+  order_id         String   @db.Uuid
+  product_id       String   @db.Uuid
+  description      String
+  qty              Decimal  @db.Decimal(12, 3)
+  unit_price_paise BigInt
+  tax_rate_bp      Int      @default(1800)
+  qty_reserved     Decimal  @default(0) @db.Decimal(12, 3)
+  qty_dispatched   Decimal  @default(0) @db.Decimal(12, 3)
+
+  order          Order             @relation(fields: [order_id], references: [id], onDelete: Cascade)
+  product        Product           @relation(fields: [product_id], references: [id], onDelete: Restrict)
+  allocations    StockAllocation[]
+  dispatch_lines DispatchLine[]
+
+  @@map("order_lines")
+}
+
+enum PaymentMethod {
+  UPI
+  NEFT
+  CASH
+  CHEQUE
+  LOAN
+}
+
+enum PaymentKind {
+  ADVANCE
+  PART
+  FINAL
+  SERVICE
+}
+
+enum PaymentStatus {
+  RECORDED
+  VERIFIED
+  REVERSED
+}
+
+model Payment {
+  id              String        @id @default(uuid()) @db.Uuid
+  order_id        String        @db.Uuid
+  invoice_id      String?       @db.Uuid
+  amount_paise    BigInt
+  method          PaymentMethod
+  kind            PaymentKind
+  reference       String?
+  received_on     DateTime      @db.Date
+  status          PaymentStatus @default(RECORDED)
+  idempotency_key String        @unique
+  recorded_by     String        @db.Uuid
+  created_at      DateTime      @default(now()) @db.Timestamptz()
+
+  order    Order    @relation(fields: [order_id], references: [id], onDelete: Restrict)
+  invoice  Invoice? @relation(fields: [invoice_id], references: [id])
+  recorder User     @relation(fields: [recorded_by], references: [id])
+
+  @@map("payments")
+}
+
+enum InvoiceType {
+  SALES
+  SERVICE
+}
+
+enum InvoiceStatus {
+  DRAFT
+  ISSUED
+  PAID
+  CANCELLED
+}
+
+model Invoice {
+  id             String        @id @default(uuid()) @db.Uuid
+  invoice_number String        @unique
+  customer_id    String        @db.Uuid
+  order_id       String?       @db.Uuid
+  ticket_id      String?       @db.Uuid
+  type           InvoiceType   @default(SALES)
+  issue_date     DateTime      @db.Date
+  due_date       DateTime      @db.Date
+  subtotal_paise BigInt
+  tax_paise      BigInt
+  total_paise    BigInt
+  status         InvoiceStatus @default(DRAFT)
+  pdf_key        String?
+  created_at     DateTime      @default(now()) @db.Timestamptz()
+  updated_at     DateTime      @updatedAt @db.Timestamptz()
+
+  customer Customer        @relation(fields: [customer_id], references: [id], onDelete: Restrict)
+  order    Order?          @relation(fields: [order_id], references: [id])
+  ticket   ServiceTicket?  @relation(fields: [ticket_id], references: [id])
+  lines    InvoiceLine[]
+  payments Payment[]
+
+  @@map("invoices")
+}
+
+model InvoiceLine {
+  id               String   @id @default(uuid()) @db.Uuid
+  invoice_id       String   @db.Uuid
+  product_id       String?  @db.Uuid
+  description      String
+  qty              Decimal  @db.Decimal(12, 3)
+  unit_price_paise BigInt
+  tax_rate_bp      Int      @default(1800)
+  line_total_paise BigInt
+
+  invoice Invoice  @relation(fields: [invoice_id], references: [id], onDelete: Cascade)
+  product Product? @relation(fields: [product_id], references: [id])
+
+  @@map("invoice_lines")
+}
+
+enum ExpenseCategory {
+  MATERIALS
+  LABOUR
+  TRANSPORT
+  PERMITS
+  MISC
+}
+
+model Expense {
+  id                    String          @id @default(uuid()) @db.Uuid
+  category              ExpenseCategory
+  amount_paise          BigInt
+  incurred_on           DateTime        @db.Date
+  order_id              String?         @db.Uuid
+  ticket_id             String?         @db.Uuid
+  description           String
+  receipt_attachment_id String?         @db.Uuid
+  recorded_by           String          @db.Uuid
+  created_at            DateTime        @default(now()) @db.Timestamptz()
+
+  order      Order?         @relation(fields: [order_id], references: [id])
+  ticket     ServiceTicket? @relation(fields: [ticket_id], references: [id])
+  attachment Attachment?    @relation(fields: [receipt_attachment_id], references: [id])
+  recorder   User           @relation(fields: [recorded_by], references: [id])
+
+  @@index([incurred_on])
+  @@map("expenses")
+}
+
+enum SubsidyStatus {
+  NOT_STARTED
+  SUBMITTED
+  UNDER_INSPECTION
+  APPROVED
+  DISBURSED
+  REJECTED
+}
+
+model SubsidyApplication {
+  id              String        @id @default(uuid()) @db.Uuid
+  order_id        String        @unique @db.Uuid
+  status          SubsidyStatus @default(NOT_STARTED)
+  application_ref String?
+  expected_paise  BigInt        @default(0)
+  received_paise  BigInt        @default(0)
+  submitted_on    DateTime?     @db.Date
+  disbursed_on    DateTime?     @db.Date
+  notes           String?
+  created_at      DateTime      @default(now()) @db.Timestamptz()
+  updated_at      DateTime      @updatedAt @db.Timestamptz()
+
+  order Order @relation(fields: [order_id], references: [id], onDelete: Cascade)
+
+  @@map("subsidy_applications")
+}
+
+// ==========================================
+// 7. INVENTORY, PURCHASING & DISPATCH
+// ==========================================
+
+enum LocationType {
+  WAREHOUSE
+  VEHICLE
+  CUSTOMER_SITES
+  RMA
+  SCRAP
+}
+
+model StockLocation {
+  id        String       @id @default(uuid()) @db.Uuid
+  code      String       @unique // e.g. WH-MAIN, VEH-01
+  name      String
+  type      LocationType @default(WAREHOUSE)
+  is_active Boolean      @default(true)
+
+  levels          StockLevel[]
+  movements_from  StockMovement[]   @relation("FromLocation")
+  movements_to    StockMovement[]   @relation("ToLocation")
+  receipts        PurchaseReceipt[]
+  inventory_units InventoryUnit[]
+  allocations     StockAllocation[]
+  dispatches_from Dispatch[]        @relation("DispatchOrigin")
+  dispatches_veh  Dispatch[]        @relation("DispatchVehicle")
+
+  @@map("stock_locations")
+}
+
+model StockLevel {
+  product_id     String   @db.Uuid
+  location_id    String   @db.Uuid
+  on_hand        Decimal  @default(0) @db.Decimal(12, 3)
+  reserved       Decimal  @default(0) @db.Decimal(12, 3)
+  avg_cost_paise BigInt   @default(0)
+  updated_at     DateTime @default(now()) @updatedAt @db.Timestamptz()
+
+  product  Product       @relation(fields: [product_id], references: [id], onDelete: Restrict)
+  location StockLocation @relation(fields: [location_id], references: [id], onDelete: Restrict)
+
+  @@id([product_id, location_id])
+  @@map("stock_levels")
+}
+
+enum MovementType {
+  RECEIPT
+  DISPATCH
+  DELIVERY
+  RETURN
+  ADJUST_IN
+  ADJUST_OUT
+  RMA_OUT
+  SCRAP
+}
+
+model StockMovement {
+  id               String       @id @default(uuid()) @db.Uuid
+  product_id       String       @db.Uuid
+  unit_id          String?      @db.Uuid
+  qty              Decimal      @db.Decimal(12, 3)
+  from_location_id String?      @db.Uuid
+  to_location_id   String?      @db.Uuid
+  type             MovementType
+  unit_cost_paise  BigInt
+  ref_type         String       // purchase_receipt, dispatch, ticket, adjustment
+  ref_id           String       @db.Uuid
+  reason           String?
+  created_by       String       @db.Uuid
+  created_at       DateTime     @default(now()) @db.Timestamptz()
+
+  product       Product        @relation(fields: [product_id], references: [id], onDelete: Restrict)
+  unit          InventoryUnit? @relation(fields: [unit_id], references: [id])
+  from_location StockLocation? @relation("FromLocation", fields: [from_location_id], references: [id])
+  to_location   StockLocation? @relation("ToLocation", fields: [to_location_id], references: [id])
+  creator       User           @relation(fields: [created_by], references: [id])
+
+  @@index([ref_type, ref_id])
+  @@index([product_id, created_at])
+  @@map("stock_movements")
+}
+
+model Supplier {
+  id         String   @id @default(uuid()) @db.Uuid
+  name       String   @unique
+  contact    String?
+  phone      String?
+  email      String?
+  gstin      String?
+  is_active  Boolean  @default(true)
+  created_at DateTime @default(now()) @db.Timestamptz()
+  updated_at DateTime @updatedAt @db.Timestamptz()
+
+  purchase_orders PurchaseOrder[]
+  receipts        PurchaseReceipt[]
+
+  @@map("suppliers")
+}
+
+enum POStatus {
+  DRAFT
+  OPEN
+  PARTIAL
+  RECEIVED
+  CANCELLED
+}
+
+model PurchaseOrder {
+  id          String   @id @default(uuid()) @db.Uuid
+  po_number   String   @unique
+  supplier_id String   @db.Uuid
+  status      POStatus @default(DRAFT)
+  ordered_on  DateTime @db.Date
+  expected_on DateTime? @db.Date
+  total_paise BigInt   @default(0)
+  created_by  String   @db.Uuid
+  created_at  DateTime @default(now()) @db.Timestamptz()
+  updated_at  DateTime @updatedAt @db.Timestamptz()
+
+  supplier Supplier            @relation(fields: [supplier_id], references: [id], onDelete: Restrict)
+  creator  User                @relation(fields: [created_by], references: [id])
+  lines    PurchaseOrderLine[]
+  receipts PurchaseReceipt[]
+
+  @@map("purchase_orders")
+}
+
+model PurchaseOrderLine {
+  id              String  @id @default(uuid()) @db.Uuid
+  po_id           String  @db.Uuid
+  product_id      String  @db.Uuid
+  qty_ordered     Decimal @db.Decimal(12, 3)
+  qty_received    Decimal @default(0) @db.Decimal(12, 3)
+  unit_cost_paise BigInt
+
+  po            PurchaseOrder         @relation(fields: [po_id], references: [id], onDelete: Cascade)
+  product       Product               @relation(fields: [product_id], references: [id], onDelete: Restrict)
+  receipt_lines PurchaseReceiptLine[]
+
+  @@map("purchase_order_lines")
+}
+
+model PurchaseReceipt {
+  id                   String   @id @default(uuid()) @db.Uuid
+  receipt_number       String   @unique
+  supplier_name        String?
+  supplier_id          String?  @db.Uuid
+  po_id                String?  @db.Uuid
+  supplier_invoice_ref String?
+  received_on          DateTime @db.Date
+  location_id          String   @db.Uuid
+  total_paise          BigInt   @default(0)
+  created_by           String   @db.Uuid
+  created_at           DateTime @default(now()) @db.Timestamptz()
+
+  supplier Supplier?             @relation(fields: [supplier_id], references: [id])
+  po       PurchaseOrder?        @relation(fields: [po_id], references: [id])
+  location StockLocation         @relation(fields: [location_id], references: [id], onDelete: Restrict)
+  creator  User                  @relation(fields: [created_by], references: [id])
+  lines    PurchaseReceiptLine[]
+
+  @@map("purchase_receipts")
+}
+
+model PurchaseReceiptLine {
+  id              String  @id @default(uuid()) @db.Uuid
+  receipt_id      String  @db.Uuid
+  po_line_id      String? @db.Uuid
+  product_id      String  @db.Uuid
+  qty             Decimal @db.Decimal(12, 3)
+  unit_cost_paise BigInt
+
+  receipt  PurchaseReceipt    @relation(fields: [receipt_id], references: [id], onDelete: Cascade)
+  po_line  PurchaseOrderLine? @relation(fields: [po_line_id], references: [id])
+  product  Product            @relation(fields: [product_id], references: [id], onDelete: Restrict)
+  units    InventoryUnit[]
+
+  @@map("purchase_receipt_lines")
+}
+
+enum UnitStatus {
+  IN_STOCK
+  PICKED
+  DISPATCHED
+  DELIVERED
+  INSTALLED
+  RMA
+  REPLACED
+  SCRAPPED
+}
+
+model InventoryUnit {
+  id                  String     @id @default(uuid()) @db.Uuid
+  product_id          String     @db.Uuid
+  serial_number       String
+  qr_code             String     @unique // opens /w/{qr_code}
+  status              UnitStatus @default(IN_STOCK)
+  location_id         String     @db.Uuid
+  receipt_line_id     String?    @db.Uuid
+  unit_cost_paise     BigInt
+  order_id            String?    @db.Uuid
+  customer_id         String?    @db.Uuid
+  installation_id     String?    @db.Uuid
+  delivered_on        DateTime?  @db.Date
+  replaced_by_unit_id String?    @db.Uuid
+  created_at          DateTime   @default(now()) @db.Timestamptz()
+
+  product             Product              @relation(fields: [product_id], references: [id], onDelete: Restrict)
+  location            StockLocation        @relation(fields: [location_id], references: [id], onDelete: Restrict)
+  receipt_line        PurchaseReceiptLine? @relation(fields: [receipt_line_id], references: [id])
+  order               Order?               @relation(fields: [order_id], references: [id])
+  customer            Customer?            @relation(fields: [customer_id], references: [id])
+  installation        Installation?        @relation(fields: [installation_id], references: [id])
+  replaced_by         InventoryUnit?       @relation("UnitReplacement", fields: [replaced_by_unit_id], references: [id])
+  successors          InventoryUnit[]      @relation("UnitReplacement")
+
+  movements           StockMovement[]
+  dispatch_units      DispatchUnit[]
+  warranties          Warranty[]
+  service_tickets     ServiceTicket[]
+  alerts              MaintenanceAlert[]
+  removed_in_ticket   TicketPart[]         @relation("RemovedUnit")
+  installed_in_ticket TicketPart[]         @relation("InstalledUnit")
+
+  @@unique([product_id, serial_number])
+  @@index([serial_number])
+  @@index([customer_id])
+  @@index([product_id, status, location_id])
+  @@map("inventory_units")
+}
+
+enum AllocationStatus {
+  ACTIVE
+  CONSUMED
+  RELEASED
+}
+
+model StockAllocation {
+  id            String           @id @default(uuid()) @db.Uuid
+  order_line_id String           @db.Uuid
+  product_id    String           @db.Uuid
+  location_id   String           @db.Uuid
+  qty           Decimal          @db.Decimal(12, 3)
+  status        AllocationStatus @default(ACTIVE)
+  created_at    DateTime         @default(now()) @db.Timestamptz()
+  closed_at     DateTime?        @db.Timestamptz()
+
+  order_line OrderLine     @relation(fields: [order_line_id], references: [id], onDelete: Cascade)
+  product    Product       @relation(fields: [product_id], references: [id], onDelete: Restrict)
+  location   StockLocation @relation(fields: [location_id], references: [id], onDelete: Restrict)
+
+  @@index([order_line_id])
+  @@map("stock_allocations")
+}
+
+// ==========================================
+// 8. DISPATCH OPERATIONS
+// ==========================================
+
+enum DispatchStatus {
+  PICKING
+  READY
+  IN_TRANSIT
+  DELIVERED
+  CANCELLED
+}
+
+model Dispatch {
+  id                  String         @id @default(uuid()) @db.Uuid
+  dispatch_number     String         @unique
+  order_id            String         @db.Uuid
+  status              DispatchStatus @default(PICKING)
+  from_location_id    String         @db.Uuid
+  vehicle_location_id String?        @db.Uuid
+  scheduled_on        DateTime       @db.Date
+  crew_lead_id        String?        @db.Uuid
+  packed_by           String?        @db.Uuid
+  departed_at         DateTime?      @db.Timestamptz()
+  delivered_at        DateTime?      @db.Timestamptz()
+  delivered_lat       Decimal?       @db.Decimal(10, 7)
+  delivered_lng       Decimal?       @db.Decimal(10, 7)
+  created_at          DateTime       @default(now()) @db.Timestamptz()
+  updated_at          DateTime       @updatedAt @db.Timestamptz()
+
+  order            Order          @relation(fields: [order_id], references: [id], onDelete: Restrict)
+  from_location    StockLocation  @relation("DispatchOrigin", fields: [from_location_id], references: [id])
+  vehicle_location StockLocation? @relation("DispatchVehicle", fields: [vehicle_location_id], references: [id])
+  crew_lead        User?          @relation(fields: [crew_lead_id], references: [id])
+  lines            DispatchLine[]
+  units            DispatchUnit[]
+
+  @@map("dispatches")
+}
+
+model DispatchLine {
+  id            String   @id @default(uuid()) @db.Uuid
+  dispatch_id   String   @db.Uuid
+  order_line_id String   @db.Uuid
+  product_id    String   @db.Uuid
+  qty_required  Decimal  @db.Decimal(12, 3)
+  qty_loaded    Decimal  @default(0) @db.Decimal(12, 3)
+
+  dispatch   Dispatch       @relation(fields: [dispatch_id], references: [id], onDelete: Cascade)
+  order_line OrderLine      @relation(fields: [order_line_id], references: [id], onDelete: Restrict)
+  product    Product        @relation(fields: [product_id], references: [id], onDelete: Restrict)
+  units      DispatchUnit[]
+
+  @@map("dispatch_lines")
+}
+
+enum ScanMethod {
+  QR
+  BARCODE
+  MANUAL
+}
+
+model DispatchUnit {
+  id               String     @id @default(uuid()) @db.Uuid
+  dispatch_id      String     @db.Uuid
+  dispatch_line_id String     @db.Uuid
+  unit_id          String     @db.Uuid
+  method           ScanMethod @default(QR)
+  scanned_by       String     @db.Uuid
+  scanned_at       DateTime   @default(now()) @db.Timestamptz()
+  removed_at       DateTime?  @db.Timestamptz()
+
+  dispatch      Dispatch      @relation(fields: [dispatch_id], references: [id], onDelete: Cascade)
+  dispatch_line DispatchLine  @relation(fields: [dispatch_line_id], references: [id], onDelete: Cascade)
+  unit          InventoryUnit @relation(fields: [unit_id], references: [id], onDelete: Restrict)
+  scanner       User          @relation(fields: [scanned_by], references: [id])
+
+  @@unique([dispatch_id, unit_id])
+  @@map("dispatch_units")
+}
+
+// ==========================================
+// 9. FIELD OPERATIONS & INSTALLATIONS
+// ==========================================
+
+enum InstallationStatus {
+  SCHEDULED
+  IN_PROGRESS
+  AWAITING_SIGNOFF
+  COMPLETED
+  ON_HOLD
+}
+
+model Installation {
+  id                     String             @id @default(uuid()) @db.Uuid
+  order_id               String             @unique @db.Uuid
+  status                 InstallationStatus @default(SCHEDULED)
+  scheduled_on           DateTime           @db.Date
+  slot                   String             @default("MORNING") // MORNING, AFTERNOON, ALL_DAY
+  crew_lead_id           String?            @db.Uuid
+  started_at             DateTime?          @db.Timestamptz()
+  start_lat              Decimal?           @db.Decimal(10, 7)
+  start_lng              Decimal?           @db.Decimal(10, 7)
+  finished_at            DateTime?          @db.Timestamptz()
+  installed_capacity_kw  Decimal?           @db.Decimal(4, 2)
+  test_reading_w         Decimal?           @db.Decimal(10, 2)
+  checklist              Json?
+  signed_name            String?
+  signed_at              DateTime?          @db.Timestamptz()
+  signature_attachment_id String?           @db.Uuid
+  signoff_hash           String?
+  certificate_key        String?
+  certificate_token_hash String?            @unique
+  hold_reason            String?
+  created_at             DateTime           @default(now()) @db.Timestamptz()
+  updated_at             DateTime           @updatedAt @db.Timestamptz()
+
+  order                Order              @relation(fields: [order_id], references: [id], onDelete: Restrict)
+  crew_lead            User?              @relation("CrewLead", fields: [crew_lead_id], references: [id])
+  signature_attachment Attachment?        @relation("SignatureAttachment", fields: [signature_attachment_id], references: [id])
+  crew                 InstallationCrew[]
+  suggestions          CrewSuggestion[]
+  time_logs            TimeLog[]
+  inventory_units      InventoryUnit[]
+  warranties           Warranty[]
+  service_tickets      ServiceTicket[]
+  alerts               MaintenanceAlert[]
+
+  @@map("installations")
+}
+
+model InstallationCrew {
+  installation_id String @db.Uuid
+  technician_id   String @db.Uuid
+  role            String @default("ASSISTANT") // LEAD, ASSISTANT
+
+  installation Installation @relation(fields: [installation_id], references: [id], onDelete: Cascade)
+  technician   Technician   @relation(fields: [technician_id], references: [user_id], onDelete: Cascade)
+
+  @@id([installation_id, technician_id])
+  @@map("installation_crew")
+}
+
+model CrewSuggestion {
+  id              String   @id @default(uuid()) @db.Uuid
+  installation_id String   @db.Uuid
+  rank            Int
+  technician_ids  String[] // UUIDs
+  score           Decimal  @db.Decimal(5, 2)
+  breakdown       Json
+  created_at      DateTime @default(now()) @db.Timestamptz()
+
+  installation Installation @relation(fields: [installation_id], references: [id], onDelete: Cascade)
+
+  @@map("crew_suggestions")
+}
+
+model TimeLog {
+  id                String    @id @default(uuid()) @db.Uuid
+  technician_id     String    @db.Uuid
+  installation_id   String?   @db.Uuid
+  ticket_id         String?   @db.Uuid
+  survey_id         String?   @db.Uuid
+  started_at        DateTime  @db.Timestamptz()
+  ended_at          DateTime  @db.Timestamptz()
+  hourly_cost_paise BigInt
+
+  technician   Technician    @relation(fields: [technician_id], references: [user_id], onDelete: Cascade)
+  installation Installation? @relation(fields: [installation_id], references: [id])
+  ticket       ServiceTicket? @relation(fields: [ticket_id], references: [id])
+  survey       SiteSurvey?   @relation(fields: [survey_id], references: [id])
+
+  @@map("time_logs")
+}
+
+// ==========================================
+// 10. SERVICE & WARRANTY
+// ==========================================
+
+enum WarrantyCoverage {
+  EQUIPMENT
+  WORKMANSHIP
+}
+
+enum WarrantyStatus {
+  ACTIVE
+  VOID
+  TRANSFERRED
+}
+
+enum WarrantySource {
+  DELIVERY
+  REPLACEMENT
+  SIGN_OFF
+}
+
+model Warranty {
+  id                 String           @id @default(uuid()) @db.Uuid
+  unit_id            String?          @db.Uuid
+  installation_id    String           @db.Uuid
+  customer_id        String           @db.Uuid
+  product_id         String?          @db.Uuid
+  coverage           WarrantyCoverage @default(EQUIPMENT)
+  start_date         DateTime         @db.Date
+  end_date           DateTime         @db.Date
+  months             Int
+  status             WarrantyStatus   @default(ACTIVE)
+  source             WarrantySource   @default(DELIVERY)
+  parent_warranty_id String?          @db.Uuid
+  void_reason        String?
+  voided_by          String?          @db.Uuid
+  created_at         DateTime         @default(now()) @db.Timestamptz()
+
+  unit            InventoryUnit?   @relation(fields: [unit_id], references: [id])
+  installation    Installation     @relation(fields: [installation_id], references: [id], onDelete: Restrict)
+  customer        Customer         @relation(fields: [customer_id], references: [id], onDelete: Restrict)
+  product         Product?         @relation(fields: [product_id], references: [id])
+  parent_warranty Warranty?        @relation("WarrantyChain", fields: [parent_warranty_id], references: [id])
+  successors      Warranty[]       @relation("WarrantyChain")
+  voider          User?            @relation("WarrantyVoider", fields: [voided_by], references: [id])
+  tickets         ServiceTicket[]
+
+  @@index([customer_id])
+  @@map("warranties")
+}
+
+enum TicketChannel {
+  PHONE
+  WHATSAPP
+  WEB
+  VISIT
+  MAINTENANCE_ALERT
+}
+
+enum TicketStatus {
+  OPEN
+  ASSIGNED
+  IN_PROGRESS
+  RESOLVED
+  CLOSED
+}
+
+enum WarrantyVerdict {
+  IN_WARRANTY
+  OUT_OF_WARRANTY
+  EXCLUDED
+  UNKNOWN_UNIT
+}
+
+enum BillingMode {
+  WARRANTY
+  CHARGEABLE
+}
+
+model ServiceTicket {
+  id                    String          @id @default(uuid()) @db.Uuid
+  ticket_number         String          @unique
+  customer_id           String          @db.Uuid
+  installation_id       String?         @db.Uuid
+  unit_id               String?         @db.Uuid
+  warranty_id           String?         @db.Uuid
+  channel               TicketChannel   @default(PHONE)
+  category              String          // NO_POWER, FAULT_CODE, LOW_GENERATION, DAMAGE, OTHER
+  fault_code            String?
+  description           String
+  priority              FaultPriority   @default(NORMAL)
+  status                TicketStatus    @default(OPEN)
+  warranty_verdict      WarrantyVerdict
+  billing_mode          BillingMode     @default(WARRANTY)
+  assigned_to           String?         @db.Uuid
+  sla_due_at            DateTime        @db.Timestamptz()
+  resolved_at           DateTime?       @db.Timestamptz()
+  customer_confirmed_at DateTime?       @db.Timestamptz()
+  confirmation_method   String?         // PORTAL, PHONE
+  closed_at             DateTime?       @db.Timestamptz()
+  resolution_notes      String?
+  reopen_count          Int             @default(0)
+  created_by            String?         @db.Uuid
+  created_at            DateTime        @default(now()) @db.Timestamptz()
+  updated_at            DateTime        @updatedAt @db.Timestamptz()
+
+  customer     Customer           @relation(fields: [customer_id], references: [id], onDelete: Restrict)
+  installation Installation?      @relation(fields: [installation_id], references: [id])
+  unit         InventoryUnit?     @relation(fields: [unit_id], references: [id])
+  warranty     Warranty?          @relation(fields: [warranty_id], references: [id])
+  assignee     User?              @relation("AssignedTicket", fields: [assigned_to], references: [id])
+  creator      User?              @relation("TicketCreator", fields: [created_by], references: [id])
+  parts        TicketPart[]
+  events       TicketEvent[]
+  time_logs    TimeLog[]
+  invoices     Invoice[]
+  expenses     Expense[]
+  alerts       MaintenanceAlert[]
+
+  @@index([status, sla_due_at])
+  @@index([unit_id])
+  @@map("service_tickets")
+}
+
+model TicketPart {
+  id                String   @id @default(uuid()) @db.Uuid
+  ticket_id         String   @db.Uuid
+  product_id        String   @db.Uuid
+  qty               Decimal  @db.Decimal(12, 3)
+  removed_unit_id   String?  @db.Uuid
+  installed_unit_id String?  @db.Uuid
+  unit_price_paise  BigInt   @default(0)
+  chargeable        Boolean  @default(false)
+
+  ticket         ServiceTicket  @relation(fields: [ticket_id], references: [id], onDelete: Cascade)
+  product        Product        @relation(fields: [product_id], references: [id], onDelete: Restrict)
+  removed_unit   InventoryUnit? @relation("RemovedUnit", fields: [removed_unit_id], references: [id])
+  installed_unit InventoryUnit? @relation("InstalledUnit", fields: [installed_unit_id], references: [id])
+
+  @@map("ticket_parts")
+}
+
+model TicketEvent {
+  id          String        @id @default(uuid()) @db.Uuid
+  ticket_id   String        @db.Uuid
+  type        String
+  from_status TicketStatus?
+  to_status   TicketStatus?
+  note        String?
+  actor_id    String?       @db.Uuid
+  created_at  DateTime      @default(now()) @db.Timestamptz()
+
+  ticket ServiceTicket @relation(fields: [ticket_id], references: [id], onDelete: Cascade)
+  actor  User?         @relation(fields: [actor_id], references: [id])
+
+  @@index([ticket_id, created_at])
+  @@map("ticket_events")
+}
+
+enum MaintenanceRule {
+  CLEANING_DUE
+  PRE_MONSOON
+  REPEAT_FAULT
+  MODEL_RISK
+  BATTERY_AGE
+  WARRANTY_EXPIRING_SALES
+  WARRANTY_REMINDER_CUSTOMER
+}
+
+enum MaintenanceStatus {
+  PENDING
+  ACKNOWLEDGED
+  RESOLVED
+  DISMISSED
+}
+
+model MaintenanceAlert {
+  id              String            @id @default(uuid()) @db.Uuid
+  installation_id String            @db.Uuid
+  unit_id         String?           @db.Uuid
+  rule            MaintenanceRule
+  risk_score      Int               @default(0)
+  due_on          DateTime          @db.Date
+  reason          String
+  status          MaintenanceStatus @default(PENDING)
+  ticket_id       String?           @db.Uuid
+  created_at      DateTime          @default(now()) @db.Timestamptz()
+
+  installation Installation   @relation(fields: [installation_id], references: [id], onDelete: Cascade)
+  unit         InventoryUnit? @relation(fields: [unit_id], references: [id])
+  ticket       ServiceTicket? @relation(fields: [ticket_id], references: [id])
+
+  @@unique([installation_id, rule, due_on])
+  @@map("maintenance_alerts")
+}
+
+// ==========================================
+// 11. PLATFORM, STORAGE, AUDIT & OUTBOX
+// ==========================================
+
+enum AttachmentOwnerType {
+  LEAD
+  SURVEY
+  ORDER
+  INSTALLATION
+  TICKET
+  EXPENSE
+  PRODUCT
+}
+
+enum AttachmentKind {
+  SURVEY
+  BEFORE
+  AFTER
+  ARRAY
+  INVERTER
+  EARTHING
+  SIGNATURE
+  RECEIPT
+  OTHER
+}
+
+model Attachment {
+  id          String              @id @default(uuid()) @db.Uuid
+  owner_type  AttachmentOwnerType
+  owner_id    String              @db.Uuid
+  kind        AttachmentKind
+  storage_key String
+  mime        String
+  size_bytes  BigInt
+  sha256      String?
+  lat         Decimal?            @db.Decimal(10, 7)
+  lng         Decimal?            @db.Decimal(10, 7)
+  taken_at    DateTime?           @db.Timestamptz()
+  uploaded_by String?             @db.Uuid
+  created_at  DateTime            @default(now()) @db.Timestamptz()
+
+  uploader             User?          @relation(fields: [uploaded_by], references: [id])
+  expenses             Expense[]
+  signed_installations Installation[] @relation("SignatureAttachment")
+
+  @@index([owner_type, owner_id])
+  @@map("attachments")
+}
+
+enum OutboxChannel {
+  EMAIL
+  SMS
+}
+
+enum OutboxStatus {
+  QUEUED
+  SENDING
+  SENT
+  DELIVERED
+  FAILED
+  DEAD
+}
+
+model Outbox {
+  id                  String        @id @default(uuid()) @db.Uuid
+  channel             OutboxChannel
+  recipient           String
+  template            String
+  payload             Json
+  status              OutboxStatus  @default(QUEUED)
+  attempts            Int           @default(0)
+  next_attempt_at     DateTime      @default(now()) @db.Timestamptz()
+  sent_at             DateTime?     @db.Timestamptz()
+  delivered_at        DateTime?     @db.Timestamptz()
+  provider_message_id String?
+  idempotency_key     String        @unique
+  last_error          String?
+  created_at          DateTime      @default(now()) @db.Timestamptz()
+  updated_at          DateTime      @updatedAt @db.Timestamptz()
+
+  @@index([status, next_attempt_at])
+  @@map("outbox")
+}
+
+enum ActorType {
+  USER
+  CUSTOMER
+  SYSTEM
+}
+
+model AuditLog {
+  id          String    @id @default(uuid()) @db.Uuid
+  actor_type  ActorType @default(USER)
+  actor_id    String?   @db.Uuid
+  entity_type String
+  entity_id   String    @db.Uuid
+  action      String
+  before      Json?
+  after       Json?
+  request_id  String?
+  created_at  DateTime  @default(now()) @db.Timestamptz()
+
+  @@index([entity_type, entity_id])
+  @@map("audit_log")
+}
+
+model ShareLink {
+  id         String    @id @default(uuid()) @db.Uuid
+  token_hash String    @unique
+  resource   String
+  params     Json?
+  expires_at DateTime  @db.Timestamptz()
+  created_by String    @db.Uuid
+  revoked_at DateTime? @db.Timestamptz()
+  created_at DateTime  @default(now()) @db.Timestamptz()
+
+  creator User @relation(fields: [created_by], references: [id])
+
+  @@map("share_links")
+}
+
+model IdempotencyKey {
+  scope         String
+  key           String
+  response_hash String
+  created_at    DateTime @default(now()) @db.Timestamptz()
+
+  @@id([scope, key])
+  @@map("idempotency_keys")
+}
+
