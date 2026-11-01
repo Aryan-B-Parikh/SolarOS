@@ -32,21 +32,21 @@ export function OrdersView() {
         ))}
       </div>
       {loading ? <Loading rows={5} /> : orders.length === 0 ? <EmptyState title="No orders in this stage" /> : (
-        <Card><CardContent className="p-0">
-          <table className="w-full text-sm">
+        <Card><CardContent className="p-0 overflow-x-auto">
+          <table className="w-full text-sm min-w-[640px]">
             <thead><tr className="border-b text-left text-xs text-slate-400">
-              <th className="px-4 py-2.5 font-medium">Order</th><th className="font-medium">Customer</th><th className="font-medium">System</th>
-              <th className="font-medium text-right">Total</th><th className="font-medium text-right">Paid</th><th className="font-medium">Status</th>
+              <th className="px-4 py-2.5 font-medium">Order</th><th className="px-3 py-2.5 font-medium">Customer</th><th className="px-3 py-2.5 font-medium">System</th>
+              <th className="px-3 py-2.5 font-medium text-right">Total</th><th className="px-3 py-2.5 font-medium text-right">Paid</th><th className="px-4 py-2.5 font-medium text-right">Status</th>
             </tr></thead>
             <tbody>
               {orders.map((o: any) => (
                 <tr key={o.id} className="border-b last:border-0 hover:bg-slate-50 cursor-pointer" onClick={() => nav(`orders/${o.id}`)}>
                   <td className="px-4 py-2.5 font-medium">{o.orderNumber}</td>
-                  <td>{o.customer.name}</td>
-                  <td>{o.capacityKw} kW {o.systemType === 'ON_GRID' ? 'On-Grid' : 'Off-Grid'}</td>
-                  <td className="text-right tabular-nums">{money(o.totalPaise)}</td>
-                  <td className="text-right tabular-nums">{money(o.paidPaise)}</td>
-                  <td><StageChip status={o.status} /></td>
+                  <td className="px-3 py-2.5">{o.customer.name}</td>
+                  <td className="px-3 py-2.5">{o.capacityKw} kW {o.systemType === 'ON_GRID' ? 'On-Grid' : 'Off-Grid'}</td>
+                  <td className="px-3 py-2.5 text-right tabular-nums">{money(o.totalPaise)}</td>
+                  <td className="px-3 py-2.5 text-right tabular-nums">{money(o.paidPaise)}</td>
+                  <td className="px-4 py-2.5 text-right"><StageChip status={o.status} /></td>
                 </tr>
               ))}
             </tbody>
@@ -135,22 +135,22 @@ export function OrderDetailView() {
             {/* lines + allocation */}
             <Card>
               <CardHeader className="pb-2"><CardTitle className="text-base">Lines and stock allocation</CardTitle></CardHeader>
-              <CardContent className="p-0">
-                <table className="w-full text-sm">
+              <CardContent className="p-0 overflow-x-auto">
+                <table className="w-full text-sm min-w-[500px]">
                   <thead><tr className="border-b text-left text-xs text-slate-400">
-                    <th className="px-4 py-2 font-medium">Item</th><th className="font-medium text-right">Qty</th>
-                    <th className="font-medium text-right">Reserved</th><th className="font-medium text-right">Dispatched</th><th className="font-medium text-right">Amount</th>
+                    <th className="px-4 py-2 font-medium">Item</th><th className="px-3 py-2 font-medium text-right">Qty</th>
+                    <th className="px-3 py-2 font-medium text-right">Reserved</th><th className="px-3 py-2 font-medium text-right">Dispatched</th><th className="px-4 py-2 font-medium text-right">Amount</th>
                   </tr></thead>
                   <tbody>
                     {o.lines.map((l: any) => {
                       const short = l.qtyReserved < l.qty
                       return (
-                        <tr key={l.id} className={cn('border-b last:border-0', short && 'bg-red-50/50')}>
+                        <tr key={l.id} className={cn('border-b last:border-0 hover:bg-slate-50/50', short && 'bg-red-50/50')}>
                           <td className="px-4 py-2">{l.description}{short && <span className="ml-2 text-xs text-red-600 font-medium">short by {num(l.qty - l.qtyReserved)}</span>}</td>
-                          <td className="px-4 py-2 text-right tabular-nums">{num(l.qty)}</td>
-                          <td className={cn('px-4 py-2 text-right tabular-nums', short && 'text-red-600 font-semibold')}>{num(l.qtyReserved)}</td>
-                          <td className="px-4 py-2 text-right tabular-nums text-slate-500">{num(l.qtyDispatched)}</td>
-                          <td className="px-4 py-2 text-right tabular-nums">{money(l.unitPricePaise * l.qty)}</td>
+                          <td className="px-3 py-2 text-right tabular-nums">{num(l.qty)}</td>
+                          <td className={cn('px-3 py-2 text-right tabular-nums', short && 'text-red-600 font-semibold')}>{num(l.qtyReserved)}</td>
+                          <td className="px-3 py-2 text-right tabular-nums text-slate-500">{num(l.qtyDispatched)}</td>
+                          <td className="px-4 py-2 text-right tabular-nums font-medium">{money(l.unitPricePaise * l.qty)}</td>
                         </tr>
                       )
                     })}

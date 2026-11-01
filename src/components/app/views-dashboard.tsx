@@ -161,23 +161,23 @@ export function DashboardView() {
         <Card className="lg:col-span-2">
           <CardHeader className="pb-2"><CardTitle className="text-base">Profit per project</CardTitle></CardHeader>
           <CardContent className="p-0">
-            <div className="max-h-96 overflow-y-auto scroll-thin">
-              <table className="w-full text-sm">
+            <div className="max-h-96 overflow-y-auto overflow-x-auto scroll-thin">
+              <table className="w-full text-sm min-w-[640px]">
                 <thead className="sticky top-0 bg-white"><tr className="border-b text-left text-xs text-slate-400">
-                  <th className="px-4 py-2 font-medium">Order</th><th className="font-medium">Customer</th>
-                  <th className="font-medium text-right">Net revenue</th><th className="font-medium text-right">Materials</th>
-                  <th className="font-medium text-right">Labour</th><th className="font-medium text-right">Profit</th><th className="font-medium text-right">Margin</th>
+                  <th className="px-4 py-2 font-medium">Order</th><th className="px-3 py-2 font-medium">Customer</th>
+                  <th className="px-3 py-2 font-medium text-right">Net revenue</th><th className="px-3 py-2 font-medium text-right">Materials</th>
+                  <th className="px-3 py-2 font-medium text-right">Labour</th><th className="px-3 py-2 font-medium text-right">Profit</th><th className="px-4 py-2 font-medium text-right">Margin</th>
                 </tr></thead>
                 <tbody>
                   {d.profitability.slice(0, 40).map((p: any) => (
                     <tr key={p.orderId} className={cn('border-b last:border-0 cursor-pointer hover:bg-slate-50', p.profit < 0 && 'bg-red-50/60')} onClick={() => nav(`orders/${p.orderId}`)}>
                       <td className="px-4 py-2 font-medium">{p.orderNumber}</td>
-                      <td>{p.customer}</td>
-                      <td className="text-right tabular-nums">{money(p.netRevenue)}</td>
-                      <td className="text-right tabular-nums text-slate-500">{money(p.materials)}</td>
-                      <td className="text-right tabular-nums text-slate-500">{money(p.labour)}</td>
-                      <td className={cn('text-right tabular-nums font-semibold', p.profit < 0 ? 'text-red-700' : 'text-green-700')}>{money(p.profit)}</td>
-                      <td className="text-right tabular-nums text-slate-500">{pct(p.marginBp)}</td>
+                      <td className="px-3 py-2">{p.customer}</td>
+                      <td className="px-3 py-2 text-right tabular-nums">{money(p.netRevenue)}</td>
+                      <td className="px-3 py-2 text-right tabular-nums text-slate-500">{money(p.materials)}</td>
+                      <td className="px-3 py-2 text-right tabular-nums text-slate-500">{money(p.labour)}</td>
+                      <td className={cn('px-3 py-2 text-right tabular-nums font-semibold', p.profit < 0 ? 'text-red-700' : 'text-green-700')}>{money(p.profit)}</td>
+                      <td className="px-4 py-2 text-right tabular-nums text-slate-500">{pct(p.marginBp)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -279,16 +279,19 @@ export function AnalyticsView() {
       <div className="grid md:grid-cols-2 gap-5">
         <Card>
           <CardHeader className="pb-2"><CardTitle className="text-base">Top-profit jobs</CardTitle></CardHeader>
-          <CardContent className="p-0">
-            <table className="w-full text-sm">
-              <thead><tr className="border-b text-left text-xs text-slate-400"><th className="px-4 py-2 font-medium">Order</th><th className="font-medium">Customer</th><th className="font-medium text-right">Profit</th><th className="font-medium text-right">Margin</th></tr></thead>
+          <CardContent className="p-0 overflow-x-auto">
+            <table className="w-full text-sm min-w-[360px]">
+              <thead><tr className="border-b text-left text-xs text-slate-400">
+                <th className="px-4 py-2 font-medium">Order</th><th className="px-3 py-2 font-medium">Customer</th>
+                <th className="px-3 py-2 font-medium text-right">Profit</th><th className="px-4 py-2 font-medium text-right">Margin</th>
+              </tr></thead>
               <tbody>
                 {d.topProfitJobs.map((p: any) => (
                   <tr key={p.orderId} className="border-b last:border-0 cursor-pointer hover:bg-slate-50" onClick={() => nav(`orders/${p.orderId}`)}>
                     <td className="px-4 py-2 font-medium">{p.orderNumber}</td>
-                    <td>{p.customer}</td>
-                    <td className="text-right tabular-nums text-green-700 font-medium">{money(p.profit)}</td>
-                    <td className="text-right tabular-nums text-slate-500">{pct(p.marginBp)}</td>
+                    <td className="px-3 py-2">{p.customer}</td>
+                    <td className="px-3 py-2 text-right tabular-nums text-green-700 font-medium">{money(p.profit)}</td>
+                    <td className="px-4 py-2 text-right tabular-nums text-slate-500">{pct(p.marginBp)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -298,16 +301,19 @@ export function AnalyticsView() {
 
         <Card>
           <CardHeader className="pb-2"><CardTitle className="text-base">Loss-making jobs</CardTitle></CardHeader>
-          <CardContent className="p-0">
+          <CardContent className="p-0 overflow-x-auto">
             {d.lossMaking.length === 0 ? <div className="p-4"><EmptyState title="No loss-making jobs" /></div> : (
-              <table className="w-full text-sm">
-                <thead><tr className="border-b text-left text-xs text-slate-400"><th className="px-4 py-2 font-medium">Order</th><th className="font-medium">Customer</th><th className="font-medium text-right">Loss</th></tr></thead>
+              <table className="w-full text-sm min-w-[320px]">
+                <thead><tr className="border-b text-left text-xs text-slate-400">
+                  <th className="px-4 py-2 font-medium">Order</th><th className="px-3 py-2 font-medium">Customer</th>
+                  <th className="px-4 py-2 font-medium text-right">Loss</th>
+                </tr></thead>
                 <tbody>
                   {d.lossMaking.map((p: any) => (
                     <tr key={p.orderId} className="border-b last:border-0 bg-red-50/50 cursor-pointer hover:bg-red-50" onClick={() => nav(`orders/${p.orderId}`)}>
                       <td className="px-4 py-2 font-medium">{p.orderNumber}</td>
-                      <td>{p.customer}</td>
-                      <td className="text-right tabular-nums text-red-700 font-semibold">{money(p.profit)}</td>
+                      <td className="px-3 py-2">{p.customer}</td>
+                      <td className="px-4 py-2 text-right tabular-nums text-red-700 font-semibold">{money(p.profit)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -319,22 +325,24 @@ export function AnalyticsView() {
 
       <Card>
         <CardHeader className="pb-2"><CardTitle className="text-base">Predictive maintenance alerts</CardTitle></CardHeader>
-        <CardContent className="p-0">
+        <CardContent className="p-0 overflow-x-auto">
           {l2 ? <Loading rows={2} /> : (maint?.alerts ?? []).length === 0 ? (
             <div className="p-4"><EmptyState title="No open maintenance alerts" hint="Run the daily job to score installations (cleaning due, battery age, repeat faults, warranty ending)." /></div>
           ) : (
-            <table className="w-full text-sm">
+            <table className="w-full text-sm min-w-[500px]">
               <thead><tr className="border-b text-left text-xs text-slate-400">
-                <th className="px-4 py-2 font-medium">Rule</th><th className="font-medium">Customer</th><th className="font-medium">Reason</th><th className="font-medium text-right">Risk</th><th className="font-medium text-right">Due</th>
+                <th className="px-4 py-2 font-medium">Rule</th><th className="px-3 py-2 font-medium">Customer</th>
+                <th className="px-3 py-2 font-medium">Reason</th><th className="px-3 py-2 font-medium text-right">Risk</th>
+                <th className="px-4 py-2 font-medium text-right">Due</th>
               </tr></thead>
               <tbody>
                 {(maint?.alerts ?? []).map((a: any) => (
-                  <tr key={a.id} className="border-b last:border-0">
+                  <tr key={a.id} className="border-b last:border-0 hover:bg-slate-50/50">
                     <td className="px-4 py-2 font-medium">{a.rule.replace(/_/g, ' ').toLowerCase()}</td>
-                    <td>{a.installation?.order?.customer?.name ?? '—'}</td>
-                    <td className="text-slate-500">{a.reason}</td>
-                    <td className="text-right tabular-nums">{a.riskScore}</td>
-                    <td className="text-right text-slate-500">{fmtDate(a.dueOn)}</td>
+                    <td className="px-3 py-2">{a.installation?.order?.customer?.name ?? '—'}</td>
+                    <td className="px-3 py-2 text-slate-500">{a.reason}</td>
+                    <td className="px-3 py-2 text-right tabular-nums">{a.riskScore}</td>
+                    <td className="px-4 py-2 text-right text-slate-500">{fmtDate(a.dueOn)}</td>
                   </tr>
                 ))}
               </tbody>

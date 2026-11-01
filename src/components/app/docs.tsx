@@ -105,16 +105,16 @@ export function QuoteDoc({ q, branding }: { q: QuoteDocData; branding: Branding 
       </div>
       <table className="w-full text-sm border-t">
         <thead><tr className="text-left text-[10px] uppercase tracking-wide text-slate-400 border-b">
-          <th className="py-2 font-semibold">Item</th><th className="text-right font-semibold">Qty</th>
-          <th className="text-right font-semibold">Rate</th><th className="text-right font-semibold">Amount</th>
+          <th className="py-2 pl-1 font-semibold">Item</th><th className="px-2 text-right font-semibold">Qty</th>
+          <th className="px-2 text-right font-semibold">Rate</th><th className="py-2 pr-1 text-right font-semibold">Amount</th>
         </tr></thead>
         <tbody>
           {q.lines.map((l, i) => (
             <tr key={i} className="border-b last:border-0">
-              <td className="py-1.5">{l.description}</td>
-              <td className="text-right tabular-nums">{num(l.qty)}{l.uom ? ` ${l.uom.toLowerCase()}` : ''}</td>
-              <td className="text-right tabular-nums text-slate-500">{money(l.unitPricePaise)}</td>
-              <td className="text-right tabular-nums">{money(l.lineTotalPaise)}</td>
+              <td className="py-1.5 pl-1">{l.description}</td>
+              <td className="px-2 text-right tabular-nums">{num(l.qty)}{l.uom ? ` ${l.uom.toLowerCase()}` : ''}</td>
+              <td className="px-2 text-right tabular-nums text-slate-500">{money(l.unitPricePaise)}</td>
+              <td className="py-1.5 pr-1 text-right tabular-nums font-medium">{money(l.lineTotalPaise)}</td>
             </tr>
           ))}
         </tbody>
@@ -180,16 +180,16 @@ export function InvoiceDoc({ inv, branding }: { inv: InvoiceDocData; branding: B
       </div>
       <table className="w-full text-sm border-t">
         <thead><tr className="text-left text-[10px] uppercase tracking-wide text-slate-400 border-b">
-          <th className="py-2 font-semibold">Description</th><th className="text-right font-semibold">Qty</th>
-          <th className="text-right font-semibold">Rate</th><th className="text-right font-semibold">Amount</th>
+          <th className="py-2 pl-1 font-semibold">Description</th><th className="px-2 text-right font-semibold">Qty</th>
+          <th className="px-2 text-right font-semibold">Rate</th><th className="py-2 pr-1 text-right font-semibold">Amount</th>
         </tr></thead>
         <tbody>
           {inv.lines.map((l, i) => (
             <tr key={i} className="border-b last:border-0">
-              <td className="py-1.5">{l.description}</td>
-              <td className="text-right tabular-nums">{num(l.qty)}</td>
-              <td className="text-right tabular-nums text-slate-500">{money(l.unitPricePaise)}</td>
-              <td className="text-right tabular-nums">{money(l.lineTotalPaise)}</td>
+              <td className="py-1.5 pl-1">{l.description}</td>
+              <td className="px-2 text-right tabular-nums">{num(l.qty)}</td>
+              <td className="px-2 text-right tabular-nums text-slate-500">{money(l.unitPricePaise)}</td>
+              <td className="py-1.5 pr-1 text-right tabular-nums font-medium">{money(l.lineTotalPaise)}</td>
             </tr>
           ))}
         </tbody>

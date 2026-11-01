@@ -14,7 +14,8 @@ import { Progress } from '@/components/ui/progress'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
 import { Alert, EmptyState, Field, Loading, PageHeader, StageChip, SerialBadge } from './shared'
-import { ScanLine, Truck, PackageCheck, CheckCircle2, XCircle, ArrowRight, Undo2, MapPin } from 'lucide-react'
+import { QrScannerModal } from './qr-scanner'
+import { ScanLine, Truck, PackageCheck, CheckCircle2, XCircle, ArrowRight, Undo2, MapPin, Camera } from 'lucide-react'
 
 export function DispatchQueueView() {
   const { data, loading } = useData(() => api('/dispatches'), [])
@@ -64,6 +65,7 @@ export function PickScanView() {
   {
     const { data, loading, error, reload } = useData(() => api(`/dispatches/${id}`), [id])
     const [code, setCode] = useState('')
+    const [scannerOpen, setScannerOpen] = useState(false)
     const [flash, setFlash] = useState<'ok' | 'bad' | null>(null)
     const [flashMsg, setFlashMsg] = useState('')
     const { busy, mutate } = useMutation()
@@ -117,9 +119,38 @@ export function PickScanView() {
               <div className="text-sm font-semibold flex items-center gap-2"><ScanLine className="h-4 w-4" /> Scan a serial, QR code or label link</div>
               <form onSubmit={(e) => { e.preventDefault(); void doScan(false) }} className="flex gap-2">
                 <Input ref={inputRef} value={code} onChange={(e) => setCode(e.target.value)} placeholder="e.g. INV3K-26A-000305 or SP1A2B3C4D" className="font-mono text-base h-11" autoFocus />
+                <Button type="button" variant="outline" className="h-11 px-3 border-blue-200 text-blue-700 hover:bg-blue-50 shrink-0" onClick={() => setScannerOpen(true)} title="Scan with camera or upload photo">
+                  <Camera className="h-4 w-4 mr-1.5" />
+                  <span className="text-xs font-medium">Scan QR</span>
+                </Button>
                 <Button type="submit" className="h-11 px-6">Scan</Button>
                 <Button type="button" variant="outline" className="h-11" onClick={() => doScan(true)} title="For damaged labels — logged as manual entry">Manual</Button>
               </form>
+
+              <QrScannerModal
+                open={scannerOpen}
+                onOpenChange={setScannerOpen}
+                onScan={async (scanned) => {
+                  setCode(scanned)
+                  try {
+                    const r = await api(`/dispatches/${id}/scan`, {
+                      method: 'POST',
+                      json: { code: scanned.trim(), method: 'QR', idempotencyKey: uuid() },
+                    })
+                    setFlash('ok')
+                    setFlashMsg(`${r.unit.product} · serial ${r.unit.serialNumber} — ${r.line.loaded} of ${r.line.required} on this line${r.dispatch.complete ? ' · pick list complete!' : ''}`)
+                    setCode('')
+                    reload()
+                  } catch (e: any) {
+                    setFlash('bad')
+                    setFlashMsg(e.message)
+                  } finally {
+                    setTimeout(() => setFlash(null), 3500)
+                  }
+                }}
+                title="Scan Dispatch Item QR"
+                description="Point your camera at the unit label or upload a photo of the QR code to verify into dispatch."
+              />
               {flash && (
                 <div className={cn('rounded-lg px-3 py-2 text-sm flex items-start gap-2', flash === 'ok' ? 'bg-green-100 text-green-900' : 'bg-red-100 text-red-900')} role="status" aria-live="polite">
                   {flash === 'ok' ? <CheckCircle2 className="h-4 w-4 mt-0.5 shrink-0" /> : <XCircle className="h-4 w-4 mt-0.5 shrink-0" />}

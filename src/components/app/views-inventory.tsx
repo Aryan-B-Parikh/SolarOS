@@ -332,21 +332,21 @@ export function UnitsView() {
         ))}
       </div>
       {loading ? <Loading rows={6} /> : (
-        <Card><CardContent className="p-0">
-          <table className="w-full text-sm">
+        <Card><CardContent className="p-0 overflow-x-auto">
+          <table className="w-full text-sm min-w-[640px]">
             <thead><tr className="border-b text-left text-xs text-slate-400">
-              <th className="px-4 py-2.5 font-medium">Serial</th><th className="font-medium">Product</th><th className="font-medium">Status</th>
-              <th className="font-medium">Customer</th><th className="font-medium">Delivered</th><th className="font-medium text-right">Warranty page</th>
+              <th className="px-4 py-2.5 font-medium">Serial</th><th className="px-3 py-2.5 font-medium">Product</th><th className="px-3 py-2.5 font-medium">Status</th>
+              <th className="px-3 py-2.5 font-medium">Customer</th><th className="px-3 py-2.5 font-medium">Delivered</th><th className="px-4 py-2.5 font-medium text-right">Warranty page</th>
             </tr></thead>
             <tbody>
               {units.slice(0, 100).map((u: any) => (
-                <tr key={u.id} className="border-b last:border-0">
+                <tr key={u.id} className="border-b last:border-0 hover:bg-slate-50/50">
                   <td className="px-4 py-2.5 font-mono text-xs">{u.serialNumber}</td>
-                  <td>{u.product.name}</td>
-                  <td><StageChip status={u.status} /></td>
-                  <td>{u.customer?.name ?? '—'}</td>
-                  <td className="text-slate-500">{u.deliveredOn ? fmtDate(u.deliveredOn) : '—'}</td>
-                  <td className="text-right">
+                  <td className="px-3 py-2.5">{u.product.name}</td>
+                  <td className="px-3 py-2.5"><StageChip status={u.status} /></td>
+                  <td className="px-3 py-2.5">{u.customer?.name ?? '—'}</td>
+                  <td className="px-3 py-2.5 text-slate-500">{u.deliveredOn ? fmtDate(u.deliveredOn) : '—'}</td>
+                  <td className="px-4 py-2.5 text-right">
                     <Button size="sm" variant="ghost" onClick={() => (window.location.hash = `/w/${u.qrCode}`)}>
                       <QrCode className="h-3.5 w-3.5 mr-1" /> /w/{u.qrCode}
                     </Button>
@@ -432,24 +432,24 @@ export function PurchasingView() {
 
       <Card>
         <CardHeader className="pb-2"><CardTitle className="text-base">Purchase orders</CardTitle></CardHeader>
-        <CardContent className="p-0">
+        <CardContent className="p-0 overflow-x-auto">
           {l2 ? <Loading rows={3} /> : (pos?.purchaseOrders ?? []).length === 0 ? <div className="p-4"><EmptyState title="No purchase orders" /></div> : (
-            <table className="w-full text-sm">
+            <table className="w-full text-sm min-w-[640px]">
               <thead><tr className="border-b text-left text-xs text-slate-400">
-                <th className="px-4 py-2.5 font-medium">PO</th><th className="font-medium">Supplier</th><th className="font-medium">Lines</th>
-                <th className="font-medium text-right">Total</th><th className="font-medium">Status</th><th className="font-medium">Expected</th>
-                <th className="font-medium text-right">Actions</th>
+                <th className="px-4 py-2.5 font-medium">PO</th><th className="px-3 py-2.5 font-medium">Supplier</th><th className="px-3 py-2.5 font-medium">Lines</th>
+                <th className="px-3 py-2.5 font-medium text-right">Total</th><th className="px-3 py-2.5 font-medium">Status</th><th className="px-3 py-2.5 font-medium">Expected</th>
+                <th className="px-4 py-2.5 font-medium text-right">Actions</th>
               </tr></thead>
               <tbody>
                 {(pos?.purchaseOrders ?? []).map((p: any) => (
-                  <tr key={p.id} className="border-b last:border-0">
+                  <tr key={p.id} className="border-b last:border-0 hover:bg-slate-50/50">
                     <td className="px-4 py-2.5 font-medium">{p.poNumber}</td>
-                    <td>{p.supplier?.name}</td>
-                    <td className="text-slate-500">{p.lines.map((l: any) => `${l.product?.name?.split(' ').slice(0, 3).join(' ')} ${l.qtyReceived}/${l.qtyOrdered}`).join(', ')}</td>
-                    <td className="text-right tabular-nums">{money(p.totalPaise)}</td>
-                    <td><StageChip status={p.status} /></td>
-                    <td className="text-slate-500">{p.expectedOn ? fmtDate(p.expectedOn) : '—'}</td>
-                    <td className="pr-3 text-right">
+                    <td className="px-3 py-2.5">{p.supplier?.name}</td>
+                    <td className="px-3 py-2.5 text-slate-500">{p.lines.map((l: any) => `${l.product?.name?.split(' ').slice(0, 3).join(' ')} ${l.qtyReceived}/${l.qtyOrdered}`).join(', ')}</td>
+                    <td className="px-3 py-2.5 text-right tabular-nums">{money(p.totalPaise)}</td>
+                    <td className="px-3 py-2.5"><StageChip status={p.status} /></td>
+                    <td className="px-3 py-2.5 text-slate-500">{p.expectedOn ? fmtDate(p.expectedOn) : '—'}</td>
+                    <td className="px-4 py-2.5 text-right">
                       {['OPEN', 'PARTIAL'].includes(p.status) && (
                         <Button size="sm" variant="outline" className="h-7 px-2 text-xs text-red-700 border-red-200 hover:bg-red-50" disabled={busy}
                           onClick={() => {

@@ -18,6 +18,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
 import { Alert, EmptyState, Field, Loading, PageHeader, SignaturePad, StageChip, uploadPhoto, dataUrlToFile, makeSamplePhoto } from './shared'
+import { QrScannerModal } from './qr-scanner'
 import { Sun, MapPin, ClipboardCheck, Camera, PenLine, CheckCircle2, ScanLine, QrCode, PlayCircle, PauseCircle, Navigation, Package, X, Loader2 } from 'lucide-react'
 
 // ── FR-6.7: draft persistence helpers (localStorage, debounced writes) ─
@@ -842,22 +843,57 @@ function SignoffPanel({ installationId, inst, photos, checklist, capacity, readi
 export function ScanView() {
   const [code, setCode] = useState('')
   const [result, setResult] = useState<any>(null)
+  const [scannerOpen, setScannerOpen] = useState(false)
   const { busy, mutate } = useMutation()
+
+  const lookup = (c: string) => {
+    const trimmed = c.trim()
+    if (!trimmed) return
+    setCode(trimmed)
+    mutate(async () => {
+      const r = await api(`/inventory/units?code=${encodeURIComponent(trimmed)}`)
+      setResult(r.unit)
+      return r
+    }, { silent: true, onDone: () => {} })
+  }
 
   return (
     <div className="max-w-xl mx-auto space-y-4">
-      <PageHeader title="Scan a unit" sub="Staff scan opens the full unit record; the QR on the label opens the public warranty page for anyone." />
+      <PageHeader title="Scan a unit" sub="Scan a physical QR code or enter a serial number to look up equipment records." />
       <Card>
         <CardContent className="p-4 space-y-3">
           <div className="flex gap-2">
-            <Input value={code} onChange={(e) => setCode(e.target.value)} placeholder="QR code or serial number" className="font-mono h-11" />
-            <Button className="h-11" disabled={busy || !code} onClick={() => mutate(async () => {
-              const r = await api(`/inventory/units?code=${encodeURIComponent(code.trim())}`)
-              setResult(r.unit)
-              return r
-            }, { silent: true, onDone: () => {} })}><ScanLine className="h-4 w-4 mr-1" /> Look up</Button>
+            <Input
+              value={code}
+              onChange={(e) => setCode(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') lookup(code) }}
+              placeholder="QR code or serial number"
+              className="font-mono h-11"
+            />
+            <Button
+              type="button"
+              variant="outline"
+              className="h-11 px-3 border-blue-200 text-blue-700 hover:bg-blue-50 shrink-0"
+              onClick={() => setScannerOpen(true)}
+              title="Open camera or upload photo to scan QR code"
+            >
+              <Camera className="h-4 w-4 mr-1.5" />
+              <span className="text-xs font-medium">Scan QR</span>
+            </Button>
+            <Button className="h-11" disabled={busy || !code.trim()} onClick={() => lookup(code)}>
+              <ScanLine className="h-4 w-4 mr-1" /> Look up
+            </Button>
           </div>
-          {result === null && <p className="text-xs text-slate-400">Try <code className="bg-slate-100 rounded px-1">INV3K-24A-001873</code> (the May 2025 demo inverter).</p>}
+
+          <QrScannerModal
+            open={scannerOpen}
+            onOpenChange={setScannerOpen}
+            onScan={(scanned) => lookup(scanned)}
+            title="Scan Unit QR Code"
+            description="Point your camera at the QR label on the unit, or upload a photo of the label."
+          />
+
+          {result === null && <p className="text-xs text-slate-400">Try scanning the QR label or typing <code className="bg-slate-100 rounded px-1">INV3K-24A-001873</code> (the May 2025 demo inverter).</p>}
           {result && (
             <div className="rounded-lg border p-3 space-y-2 text-sm">
               <div className="font-semibold">{result.product.name}</div>

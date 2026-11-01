@@ -379,16 +379,19 @@ function TemplatesTab() {
               </Button>
             </div>
           </CardHeader>
-          <CardContent className="p-0">
-            <table className="w-full text-sm">
-              <thead><tr className="border-b text-left text-xs text-slate-400"><th className="px-4 py-1.5 font-medium">Product</th><th className="font-medium">Rule</th><th className="font-medium text-right">Value</th><th className="font-medium text-right">Allowance</th></tr></thead>
+          <CardContent className="p-0 overflow-x-auto">
+            <table className="w-full text-sm min-w-[480px]">
+              <thead><tr className="border-b text-left text-xs text-slate-400">
+                <th className="px-4 py-2 font-medium">Product</th><th className="px-3 py-2 font-medium">Rule</th>
+                <th className="px-3 py-2 font-medium text-right">Value</th><th className="px-4 py-2 font-medium text-right">Allowance</th>
+              </tr></thead>
               <tbody>
                 {t.bomLines.map((l: any) => (
-                  <tr key={l.id} className="border-b last:border-0">
-                    <td className="px-4 py-1.5">{l.product.name}</td>
-                    <td><span className="text-[10px] font-mono rounded bg-slate-100 px-1.5 py-0.5 text-slate-600">{l.rule}</span></td>
-                    <td className="text-right tabular-nums">{num(l.value)}</td>
-                    <td className="text-right tabular-nums text-slate-400">{num(l.allowance)}</td>
+                  <tr key={l.id} className="border-b last:border-0 hover:bg-slate-50/50">
+                    <td className="px-4 py-2 font-medium">{l.product.name}</td>
+                    <td className="px-3 py-2"><span className="text-[10px] font-mono rounded bg-slate-100 px-1.5 py-0.5 text-slate-600">{l.rule}</span></td>
+                    <td className="px-3 py-2 text-right tabular-nums">{num(l.value)}</td>
+                    <td className="px-4 py-2 text-right tabular-nums text-slate-400">{num(l.allowance)}</td>
                   </tr>
                 ))}
                 {t.bomLines.length === 0 && <tr><td colSpan={4} className="px-4 py-4 text-center text-slate-400">No BOM lines yet.</td></tr>}

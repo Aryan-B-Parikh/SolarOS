@@ -10,7 +10,7 @@ export function paiseToRupees(p: number): number {
   return p / 100
 }
 
-/** Format paise as Rs with Indian lakh grouping, e.g. 3449250 -> "Rs 34,492.50" ; 15000000 -> "Rs 1,50,000" */
+/** Format paise as ₹ with Indian lakh grouping, e.g. 3449250 -> "₹34,492.50" ; 15000000 -> "₹1,50,000" */
 export function formatPaise(p: number | null | undefined, opts?: { decimals?: number }): string {
   if (p === null || p === undefined) return '—'
   const neg = p < 0
@@ -20,7 +20,7 @@ export function formatPaise(p: number | null | undefined, opts?: { decimals?: nu
   const showDecimals = opts?.decimals !== undefined ? opts.decimals : (paisePart !== 0 ? 2 : 0)
   const grouped = groupIndian(rupees.toString())
   const dec = showDecimals > 0 ? '.' + paisePart.toString().padStart(2, '0').slice(0, showDecimals) : ''
-  return `${neg ? '-' : ''}Rs ${grouped}${dec}`
+  return `${neg ? '-' : ''}₹${grouped}${dec}`
 }
 
 /** Indian digit grouping: 1234567 -> "12,34,567" */
@@ -45,7 +45,7 @@ function groupIndianSimple(s: string): string {
 /** Parse a user-entered rupee string ("1,50,000.50") to paise */
 export function parseRupeeString(s: string | number | null | undefined): number | null {
   if (s === null || s === undefined || s === '') return null
-  const cleaned = s.toString().replace(/[Rs,\s]/g, '')
+  const cleaned = s.toString().replace(/[₹Rs,\s]/g, '')
   const n = Number(cleaned)
   if (Number.isNaN(n)) return null
   return Math.round(n * 100)

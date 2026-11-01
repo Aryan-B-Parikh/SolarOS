@@ -78,11 +78,11 @@ export function ServiceDeskView() {
       <div>
         <div className="text-sm font-semibold text-slate-600 mb-2">Recent tickets</div>
         {loading ? <Loading rows={3} /> : tickets.length === 0 ? <EmptyState title="No tickets yet" hint="Search a customer to open one." /> : (
-          <Card><CardContent className="p-0">
-            <table className="w-full text-sm">
+          <Card><CardContent className="p-0 overflow-x-auto">
+            <table className="w-full text-sm min-w-[640px]">
               <thead><tr className="border-b text-left text-xs text-slate-400">
-                <th className="px-4 py-2.5 font-medium">Ticket</th><th className="font-medium">Customer</th><th className="font-medium">Unit</th>
-                <th className="font-medium">Verdict</th><th className="font-medium">Status</th><th className="font-medium text-right">SLA</th>
+                <th className="px-4 py-2.5 font-medium">Ticket</th><th className="px-3 py-2.5 font-medium">Customer</th><th className="px-3 py-2.5 font-medium">Unit</th>
+                <th className="px-3 py-2.5 font-medium">Verdict</th><th className="px-3 py-2.5 font-medium">Status</th><th className="px-4 py-2.5 font-medium text-right">SLA</th>
               </tr></thead>
               <tbody>
                 {tickets.map((t: any) => {
@@ -90,11 +90,11 @@ export function ServiceDeskView() {
                   return (
                     <tr key={t.id} className="border-b last:border-0 hover:bg-slate-50 cursor-pointer" onClick={() => nav(`ticket/${t.id}`)}>
                       <td className="px-4 py-2.5 font-medium">{t.ticketNumber}</td>
-                      <td>{t.customer.name}</td>
-                      <td className="text-slate-500">{t.unit?.product.name ?? '—'}</td>
-                      <td><span className={cn('text-xs font-medium rounded px-1.5 py-0.5', v?.tone === 'done' ? 'bg-green-50 text-green-700' : v?.tone === 'warn' ? 'bg-amber-50 text-amber-800' : 'bg-slate-100 text-slate-600')}>{v?.label}</span></td>
-                      <td><StageChip status={t.status} /></td>
-                      <td className={cn('text-right text-xs', new Date(t.slaDueAt) < new Date() && t.status !== 'CLOSED' ? 'text-red-600 font-medium' : 'text-slate-400')}>{fmtDateTime(t.slaDueAt)}</td>
+                      <td className="px-3 py-2.5">{t.customer.name}</td>
+                      <td className="px-3 py-2.5 text-slate-500">{t.unit?.product.name ?? '—'}</td>
+                      <td className="px-3 py-2.5"><span className={cn('text-xs font-medium rounded px-1.5 py-0.5', v?.tone === 'done' ? 'bg-green-50 text-green-700' : v?.tone === 'warn' ? 'bg-amber-50 text-amber-800' : 'bg-slate-100 text-slate-600')}>{v?.label}</span></td>
+                      <td className="px-3 py-2.5"><StageChip status={t.status} /></td>
+                      <td className={cn('px-4 py-2.5 text-right text-xs', new Date(t.slaDueAt) < new Date() && t.status !== 'CLOSED' ? 'text-red-600 font-medium' : 'text-slate-400')}>{fmtDateTime(t.slaDueAt)}</td>
                     </tr>
                   )
                 })}
@@ -531,20 +531,20 @@ export function CustomersView() {
       <PageHeader title="Customers" sub={`${customers.length} customers`} />
       <Input placeholder="Search by name, phone or number…" value={q} onChange={(e) => setQ(e.target.value)} className="max-w-sm" />
       {loading ? <Loading rows={4} /> : (
-        <Card><CardContent className="p-0">
-          <table className="w-full text-sm">
+        <Card><CardContent className="p-0 overflow-x-auto">
+          <table className="w-full text-sm min-w-[500px]">
             <thead><tr className="border-b text-left text-xs text-slate-400">
-              <th className="px-4 py-2.5 font-medium">Customer</th><th className="font-medium">Phone</th>
-              <th className="font-medium">Leads</th><th className="font-medium">Orders</th><th className="font-medium">Since</th>
+              <th className="px-4 py-2.5 font-medium">Customer</th><th className="px-3 py-2.5 font-medium">Phone</th>
+              <th className="px-3 py-2.5 font-medium">Leads</th><th className="px-3 py-2.5 font-medium">Orders</th><th className="px-4 py-2.5 font-medium text-right">Since</th>
             </tr></thead>
             <tbody>
               {customers.map((c: any) => (
                 <tr key={c.id} className="border-b last:border-0 hover:bg-slate-50 cursor-pointer" onClick={() => nav(`customer/${c.id}`)}>
                   <td className="px-4 py-2.5 font-medium">{c.name}<div className="text-[11px] text-slate-400">{c.customerNumber}</div></td>
-                  <td>{c.phone}</td>
-                  <td>{c.leads.length}</td>
-                  <td>{c.orders.length}</td>
-                  <td className="text-slate-500">{fmtDate(c.createdAt?.slice(0, 10))}</td>
+                  <td className="px-3 py-2.5">{c.phone}</td>
+                  <td className="px-3 py-2.5">{c.leads.length}</td>
+                  <td className="px-3 py-2.5">{c.orders.length}</td>
+                  <td className="px-4 py-2.5 text-right text-slate-500">{fmtDate(c.createdAt?.slice(0, 10))}</td>
                 </tr>
               ))}
             </tbody>

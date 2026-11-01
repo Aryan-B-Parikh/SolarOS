@@ -71,7 +71,7 @@ export function money(paise: number | null | undefined, decimals?: number): stri
   const showDec = decimals !== undefined ? decimals : p !== 0 ? 2 : 0
   const grouped = groupIndian(String(rupees))
   const dec = showDec > 0 ? '.' + String(p).padStart(2, '0').slice(0, showDec) : ''
-  return `${neg ? '−' : ''}Rs ${grouped}${dec}`
+  return `${neg ? '−' : ''}₹${grouped}${dec}`
 }
 
 function groupIndian(digits: string): string {
