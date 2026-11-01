@@ -18,7 +18,7 @@ const schema = z.object({
   channel: z.enum(['PHONE', 'WHATSAPP', 'WEB', 'VISIT', 'MAINTENANCE_ALERT']),
   category: z.enum(['NO_POWER', 'FAULT_CODE', 'LOW_GENERATION', 'DAMAGE', 'OTHER']),
   faultCode: z.string().optional().nullable(),
-  description: z.string().min(5).max(1000),
+  description: z.string().min(2).max(1000),
   priority: z.enum(['LOW', 'NORMAL', 'HIGH', 'URGENT']).optional(),
 })
 

@@ -64,3 +64,6 @@ next-env.d.ts
 
 # Skills directory
 /skills/
+
+# Uploaded assets
+db/uploads/

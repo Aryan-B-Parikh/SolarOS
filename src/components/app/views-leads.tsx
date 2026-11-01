@@ -120,7 +120,7 @@ function ManualEnquiryButton({ onDone }: { onDone: () => void }) {
             </div>
           </div>
           <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1"><Label>Monthly bill (Rs)</Label><Input type="number" value={form.monthlyBillRupees} onChange={(e) => set('monthlyBillRupees', Number(e.target.value))} /></div>
+            <div className="space-y-1"><Label>Monthly bill (₹)</Label><Input type="number" value={form.monthlyBillRupees} onChange={(e) => set('monthlyBillRupees', Number(e.target.value))} /></div>
             <div className="space-y-1"><Label>Capacity (kW)</Label><Input type="number" value={form.requestedCapacityKw} onChange={(e) => set('requestedCapacityKw', Number(e.target.value))} /></div>
           </div>
           <div className="flex justify-end gap-2 pt-1">
@@ -397,7 +397,7 @@ function QualificationForm({ lead, onSaved }: { lead: any; onSaved: () => void }
     <div className="space-y-4">
       <div className="grid sm:grid-cols-3 gap-3">
         <div className="space-y-1"><Label>Shadow-free roof area (m²) *</Label><Input type="number" value={form.roofAreaSqm} onChange={(e) => set('roofAreaSqm', e.target.value)} className={bad(areaMissing)} aria-invalid={showMissing && areaMissing} /></div>
-        <div className="space-y-1"><Label>Monthly bill (Rs) *</Label><Input type="number" value={form.monthlyBillRupees} onChange={(e) => set('monthlyBillRupees', e.target.value)} className={bad(billOrUnitsMissing)} aria-invalid={showMissing && billOrUnitsMissing} /></div>
+        <div className="space-y-1"><Label>Monthly bill (₹) *</Label><Input type="number" value={form.monthlyBillRupees} onChange={(e) => set('monthlyBillRupees', e.target.value)} className={bad(billOrUnitsMissing)} aria-invalid={showMissing && billOrUnitsMissing} /></div>
         <div className="space-y-1"><Label>or monthly units (kWh) *</Label><Input type="number" value={form.monthlyUnits} onChange={(e) => set('monthlyUnits', e.target.value)} className={bad(billOrUnitsMissing)} aria-invalid={showMissing && billOrUnitsMissing} /></div>
         <div className="space-y-1"><Label>Grid connection OK?</Label>
           <select className="w-full rounded-md border border-slate-200 px-2.5 py-2 text-sm" value={String(form.gridOk)} onChange={(e) => set('gridOk', e.target.value === 'true')}>

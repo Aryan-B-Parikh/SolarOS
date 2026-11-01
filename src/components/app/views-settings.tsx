@@ -161,7 +161,7 @@ function BusinessTab() {
         <div className="border-t pt-4 space-y-3">
           <div className="text-xs font-medium uppercase tracking-wide text-slate-400">Energy economics &amp; service SLA</div>
           <div className="grid sm:grid-cols-5 gap-4">
-            <div className="space-y-1"><Label>Default tariff (Rs/kWh)</Label><Input type="number" step="0.1" value={s.defaultTariffPaise / 100} onChange={(e) => set('defaultTariffPaise', Math.round(Number(e.target.value) * 100) || 0)} /></div>
+            <div className="space-y-1"><Label>Default tariff (₹/kWh)</Label><Input type="number" step="0.1" value={s.defaultTariffPaise / 100} onChange={(e) => set('defaultTariffPaise', Math.round(Number(e.target.value) * 100) || 0)} /></div>
             <div className="space-y-1"><Label>SLA — Low (h)</Label><Input type="number" value={s.slaHoursByPriority.LOW} onChange={(e) => setSla('LOW', e.target.value)} /></div>
             <div className="space-y-1"><Label>SLA — Normal (h)</Label><Input type="number" value={s.slaHoursByPriority.NORMAL} onChange={(e) => setSla('NORMAL', e.target.value)} /></div>
             <div className="space-y-1"><Label>SLA — High (h)</Label><Input type="number" value={s.slaHoursByPriority.HIGH} onChange={(e) => setSla('HIGH', e.target.value)} /></div>
@@ -312,8 +312,8 @@ function ProductDialog({ product, onClose, onSaved }: { product: any; onClose: (
             </Select>
           </div>
           <div className="space-y-1"><Label>Brand</Label><Input value={f.brand} onChange={(e) => set('brand', e.target.value)} /></div>
-          <div className="space-y-1"><Label>Standard cost (Rs)</Label><Input type="number" step="0.01" value={f.stdCostRupees} onChange={(e) => set('stdCostRupees', e.target.value)} /></div>
-          <div className="space-y-1"><Label>Sale price (Rs)</Label><Input type="number" step="0.01" value={f.salePriceRupees} onChange={(e) => set('salePriceRupees', e.target.value)} /></div>
+          <div className="space-y-1"><Label>Standard cost (₹)</Label><Input type="number" step="0.01" value={f.stdCostRupees} onChange={(e) => set('stdCostRupees', e.target.value)} /></div>
+          <div className="space-y-1"><Label>Sale price (₹)</Label><Input type="number" step="0.01" value={f.salePriceRupees} onChange={(e) => set('salePriceRupees', e.target.value)} /></div>
           <div className="space-y-1"><Label>Tax rate %</Label><Input type="number" step="0.5" value={f.taxRatePct} onChange={(e) => set('taxRatePct', e.target.value)} /></div>
           <div className="space-y-1"><Label>Reorder level</Label><Input type="number" step="0.5" value={f.reorderLevel} onChange={(e) => set('reorderLevel', e.target.value)} /></div>
           <div className="space-y-1 sm:col-span-2"><Label>Monitoring URL (optional)</Label><Input value={f.monitoringUrl} placeholder="https://monitor.example/site/…" onChange={(e) => set('monitoringUrl', e.target.value)} /></div>
@@ -464,8 +464,8 @@ function TemplateDialog({ template, onClose, onSaved }: { template: any; onClose
         <div className="grid sm:grid-cols-2 gap-3">
           <div className="space-y-1"><Label>Template name</Label><Input value={f.name} onChange={(e) => set('name', e.target.value)} /></div>
           <div className="space-y-1"><Label>Default cable distance (m)</Label><Input type="number" min={0} value={f.defaultCableDistanceM} onChange={(e) => set('defaultCableDistanceM', e.target.value)} /></div>
-          <div className="space-y-1"><Label>Labour allowance (Rs)</Label><Input type="number" step="0.01" value={f.labourAllowanceRupees} onChange={(e) => set('labourAllowanceRupees', e.target.value)} /></div>
-          <div className="space-y-1"><Label>Price override (Rs, blank = compute from BOM)</Label><Input type="number" step="0.01" value={f.priceOverrideRupees} onChange={(e) => set('priceOverrideRupees', e.target.value)} /></div>
+          <div className="space-y-1"><Label>Labour allowance (₹)</Label><Input type="number" step="0.01" value={f.labourAllowanceRupees} onChange={(e) => set('labourAllowanceRupees', e.target.value)} /></div>
+          <div className="space-y-1"><Label>Price override (₹, blank = compute from BOM)</Label><Input type="number" step="0.01" value={f.priceOverrideRupees} onChange={(e) => set('priceOverrideRupees', e.target.value)} /></div>
         </div>
 
         <div className="border-t pt-3 space-y-2">

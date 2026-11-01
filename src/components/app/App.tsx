@@ -102,7 +102,7 @@ export default function App() {
   return (
     <div className="min-h-screen flex flex-col bg-slate-50">
       {/* top bar */}
-      <header className="sticky top-0 z-40 bg-white border-b border-slate-200">
+      <header className="sticky top-0 z-40 bg-white border-b border-slate-200 no-print">
         <div className="flex items-center gap-3 h-14 px-4">
           <button className="lg:hidden p-2 -ml-2 text-slate-600" onClick={() => setMenuOpen(!menuOpen)} aria-label="Menu">
             {menuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
@@ -129,7 +129,7 @@ export default function App() {
 
       <div className="flex flex-1">
         {/* sidebar */}
-        <nav className={cn('w-60 shrink-0 border-r border-slate-200 bg-white overflow-y-auto scroll-thin',
+        <nav className={cn('w-60 shrink-0 border-r border-slate-200 bg-white overflow-y-auto scroll-thin no-print',
           'max-lg:fixed max-lg:inset-y-0 max-lg:left-0 max-lg:z-50 max-lg:pt-14 max-lg:shadow-xl',
           menuOpen ? 'max-lg:block' : 'max-lg:hidden', 'lg:block')}>
           <div className="p-3 space-y-1">
@@ -358,7 +358,7 @@ function LoginView({ onLogin }: { onLogin: (u: SessionUser) => void }) {
 export function PublicFrame({ children }: { children: React.ReactNode }) {
   return (
     <div className="min-h-screen flex flex-col bg-slate-50">
-      <header className="bg-white border-b border-slate-200">
+      <header className="bg-white border-b border-slate-200 no-print">
         <div className="max-w-3xl mx-auto px-4 h-14 flex items-center gap-2">
           <a href="#/home" className="flex items-center gap-2 font-semibold text-slate-900">
             <span className="grid h-8 w-8 place-items-center rounded-lg bg-blue-700 text-white"><Sun className="h-5 w-5" /></span>
@@ -367,8 +367,8 @@ export function PublicFrame({ children }: { children: React.ReactNode }) {
           <span className="ml-auto text-xs text-slate-500 font-medium">Solar EPC &amp; Rooftop Solutions</span>
         </div>
       </header>
-      <main className="flex-1 max-w-3xl w-full mx-auto px-4 py-6">{children}</main>
-      <footer className="border-t border-slate-200 bg-white py-4 mt-auto">
+      <main className="flex-1 max-w-3xl w-full mx-auto px-4 py-6 print:p-0 print:m-0 print:max-w-none">{children}</main>
+      <footer className="border-t border-slate-200 bg-white py-4 mt-auto no-print">
         <div className="max-w-3xl mx-auto px-4 text-xs text-slate-400 flex items-center justify-between">
           <span>© 2026 SunPower Solar Energy Pvt Ltd</span>
           <span>Links are private and expire · <a className="underline" href="#/home">Customer home</a></span>

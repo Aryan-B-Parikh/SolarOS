@@ -13,7 +13,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
 import { EmptyState, Field, Loading, PageHeader, StageChip } from './shared'
-import { Plus, Wallet, FileText, Receipt, Landmark, Users } from 'lucide-react'
+import { Plus, Wallet, FileText, Receipt, Landmark, Users, Printer } from 'lucide-react'
+import { PrintOverlay, InvoiceDoc } from './docs'
 
 export function AccountsView() {
   const { data, loading, reload } = useData(() => api('/accounts'), [])
@@ -21,6 +22,20 @@ export function AccountsView() {
   const { data: payData } = useData(() => api(`/analytics/technician-hours?month=${month}`), [month])
   const [expense, setExpense] = useState({ category: 'FUEL', amountRupees: 500, incurredOn: todayStr(), description: '' })
   const { busy, mutate } = useMutation()
+  const [printingInvoice, setPrintingInvoice] = useState<any | null>(null)
+  const [invoiceLoading, setInvoiceLoading] = useState(false)
+
+  const openInvoicePdf = async (inv: any) => {
+    setInvoiceLoading(true)
+    try {
+      const res = await api(`/invoices/${inv.id}`)
+      setPrintingInvoice(res)
+    } catch (e: any) {
+      toast.error(e.message)
+    } finally {
+      setInvoiceLoading(false)
+    }
+  }
 
   if (loading) return <Loading rows={5} />
   const a = data
@@ -63,7 +78,7 @@ export function AccountsView() {
             <table className="w-full text-sm min-w-[640px]">
               <thead><tr className="border-b text-left text-xs text-slate-400">
                 <th className="px-4 py-2.5 font-medium">Invoice</th><th className="px-3 py-2.5 font-medium">Customer</th><th className="px-3 py-2.5 font-medium">Type</th>
-                <th className="px-3 py-2.5 font-medium">Date</th><th className="px-3 py-2.5 font-medium text-right">Total</th><th className="px-4 py-2.5 font-medium text-right">Status</th>
+                <th className="px-3 py-2.5 font-medium">Date</th><th className="px-3 py-2.5 font-medium text-right">Total</th><th className="px-3 py-2.5 font-medium text-right">Status</th><th className="px-4 py-2.5 font-medium text-right">PDF</th>
               </tr></thead>
               <tbody>
                 {a.invoices.map((inv: any) => (
@@ -72,8 +87,13 @@ export function AccountsView() {
                     <td className="px-3 py-2.5">{inv.customer.name}</td>
                     <td className="px-3 py-2.5 capitalize">{inv.type.toLowerCase()}</td>
                     <td className="px-3 py-2.5 text-slate-500">{fmtDate(inv.issueDate)}</td>
-                    <td className="px-3 py-2.5 text-right tabular-nums">{money(inv.totalPaise)}</td>
-                    <td className="px-4 py-2.5 text-right"><StageChip status={inv.status} /></td>
+                    <td className="px-3 py-2.5 text-right tabular-nums font-medium">{money(inv.totalPaise)}</td>
+                    <td className="px-3 py-2.5 text-right"><StageChip status={inv.status} /></td>
+                    <td className="px-4 py-2.5 text-right">
+                      <Button size="sm" variant="outline" className="h-7 text-xs border-blue-200 text-blue-700 hover:bg-blue-50" disabled={invoiceLoading} onClick={() => openInvoicePdf(inv)}>
+                        <FileText className="h-3 w-3 mr-1" /> PDF
+                      </Button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -188,6 +208,12 @@ export function AccountsView() {
           </Card>
         </TabsContent>
       </Tabs>
+
+      {printingInvoice && (
+        <PrintOverlay title={`Invoice ${printingInvoice.invoice.invoiceNumber}`} onClose={() => setPrintingInvoice(null)}>
+          <InvoiceDoc inv={printingInvoice.invoice} branding={printingInvoice.branding} />
+        </PrintOverlay>
+      )}
     </div>
   )
 }

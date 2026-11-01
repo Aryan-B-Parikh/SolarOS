@@ -19,7 +19,12 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ token: stri
       signoffHash: i.signoffHash,
       testReadingW: i.testReadingW,
       crew: i.crew.map((c: any) => c.technician.user.name),
-      units: data.units.map((u: any) => ({ product: u.product.name, serial: u.serialNumber, warrantyEnd: u.warranties.find((w: any) => w.status === 'ACTIVE')?.endDate ?? null })),
+      units: data.units.map((u: any) => ({
+        product: u.product.name,
+        serial: u.serialNumber,
+        qrCode: u.qrCode,
+        warrantyEnd: u.warranties.find((w: any) => w.status === 'ACTIVE')?.endDate ?? null,
+      })),
       viaPortal: data.viaPortal,
     }
   })

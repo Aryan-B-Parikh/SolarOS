@@ -355,7 +355,7 @@ function ResolvePanel({ ticketId, ticket, onDone, onCancel }: { ticketId: string
   const { busy, mutate } = useMutation()
   const chargeable = ticket.billingMode === 'CHARGEABLE'
   const partProduct = (productsData?.products ?? []).find((p: any) => p.id === part.productId)
-  const labourRate = 45000 // billed Rs 450/h (1.5 × cost)
+  const labourRate = 45000 // billed ₹450/h (1.5 × cost)
   const billTotal = (chargeable ? (part.productId ? part.qty * (partProduct?.salePricePaise ?? 0) : 0) + labourHours * labourRate : 0)
 
   return (
@@ -406,7 +406,7 @@ function ResolvePanel({ ticketId, ticket, onDone, onCancel }: { ticketId: string
         <Field label="Billing preview">
           {chargeable
             ? <span className="text-amber-700 font-medium">{money(billTotal)} — invoiced on resolution</span>
-            : <span className="text-green-700 font-medium">Rs 0 — in warranty</span>}
+            : <span className="text-green-700 font-medium">₹0 — in warranty</span>}
         </Field>
       </div>
       <div className="flex justify-end gap-2">
@@ -509,7 +509,7 @@ function NewTicketDialog({ onDone, onCancel }: { onDone: () => void; onCancel: (
           </div>
           <div className="flex justify-end gap-2">
             <Button size="sm" variant="outline" onClick={onCancel}>Cancel</Button>
-            <Button size="sm" disabled={busy || !customerId || form.description.trim().length < 5} onClick={() => mutate(() => api('/tickets', {
+            <Button size="sm" disabled={busy || !customerId || form.description.trim().length < 2} onClick={() => mutate(() => api('/tickets', {
               method: 'POST',
               json: { customerId, unitId: unitId || null, channel: 'PHONE', category: form.category, description: form.description, priority: form.priority, faultCode: form.faultCode || null },
             }), { success: 'Ticket opened — warranty verdict set automatically', onDone: (r: any) => nav(`ticket/${r.ticket.id}`) })}>Open ticket</Button>

@@ -248,7 +248,7 @@ export function EnquiryView() {
               </div>
               <div className="grid sm:grid-cols-2 gap-4">
                 <div className="space-y-1.5">
-                  <Label htmlFor="bill">Average monthly electricity bill (Rs)</Label>
+                  <Label htmlFor="bill">Average monthly electricity bill (₹)</Label>
                   <Input id="bill" type="number" value={form.monthlyBillRupees} onChange={(e) => set('monthlyBillRupees', Number(e.target.value))} className={bad('monthlyBillRupees')} aria-invalid={!!errors.monthlyBillRupees} />
                   {errText('monthlyBillRupees')}
                   <p className="text-xs text-slate-400">Helps us size the system for you</p>
@@ -416,7 +416,7 @@ export function HomeView() {
           </Button>
         </div>
         <div className="mt-4 flex flex-wrap gap-2 text-xs">
-          {['Free site survey', 'Subsidy up to Rs 78,000', '20-year panel warranty', 'Callback within 4 business hours'].map((t) => (
+          {['Free site survey', 'Subsidy up to ₹78,000', '20-year panel warranty', 'Callback within 4 business hours'].map((t) => (
             <span key={t} className="rounded-full bg-white/10 border border-white/20 px-3 py-1">{t}</span>
           ))}
         </div>
@@ -848,6 +848,45 @@ export function QuoteView({ token }: { token: string }) {
         </Card>
       )}
 
+      {q.status === 'ACCEPTED' && (
+        <Card className="border-green-300 bg-gradient-to-r from-green-50 to-emerald-50 shadow-sm">
+          <CardContent className="p-4 flex items-center justify-between gap-3 flex-wrap">
+            <div className="flex items-center gap-3">
+              <CheckCircle2 className="h-6 w-6 text-green-600 shrink-0" />
+              <div>
+                <div className="text-sm font-semibold text-green-900">Quotation Accepted</div>
+                <div className="text-xs text-green-700">
+                  Accepted {q.acceptedAt ? `on ${fmtDate(q.acceptedAt)}` : ''} {q.acceptedName ? `by ${q.acceptedName}` : ''}. Equipment reservation and installation schedule are active.
+                </div>
+              </div>
+            </div>
+            {viaPortal && (
+              <Button size="sm" className="bg-green-700 hover:bg-green-800 text-white" onClick={() => (window.location.hash = `/p/${token}`)}>
+                Go to My SunPower Portal <ArrowRight className="h-3.5 w-3.5 ml-1" />
+              </Button>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {q.status === 'REJECTED' && (
+        <Card className="border-amber-300 bg-amber-50/70 shadow-sm">
+          <CardContent className="p-4 flex items-center justify-between gap-3 flex-wrap">
+            <div>
+              <div className="text-sm font-semibold text-amber-900">Quotation Declined</div>
+              <div className="text-xs text-amber-700">
+                This quotation was declined. {q.rejectReason ? `Reason: "${q.rejectReason}"` : ''} Our sales team can prepare an updated estimate for you.
+              </div>
+            </div>
+            {viaPortal && (
+              <Button size="sm" variant="outline" onClick={() => (window.location.hash = `/p/${token}`)}>
+                Back to My SunPower <ArrowRight className="h-3.5 w-3.5 ml-1" />
+              </Button>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
       <Card>
         <CardHeader className="pb-2"><CardTitle className="text-base">Parts list (every part included)</CardTitle></CardHeader>
         <CardContent className="p-0">
@@ -1039,7 +1078,15 @@ export function PortalView({ token }: { token: string }) {
   const [busy, setBusy] = useState(false)
   const [printing, setPrinting] = useState<'invoice' | 'warranty' | null>(null)
   const [docData, setDocData] = useState<any>(null)
+  const [deviceQrModal, setDeviceQrModal] = useState<{ serial: string; qrCode: string; product: string; qrDataUrl: string } | null>(null)
   const isVerified = verified || !!data?.verified || (typeof window !== 'undefined' && !!data?.customer)
+
+  const openDeviceQr = async (unit: { serial: string; qrCode?: string; product: string }) => {
+    const code = unit.qrCode || `SP${unit.serial.replace(/[^A-Za-z0-9]/g, '').slice(-8).toUpperCase()}`
+    const origin = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000'
+    const qrDataUrl = await QRCode.toDataURL(`${origin}/#/w/${code}`, { width: 300, margin: 2 })
+    setDeviceQrModal({ serial: unit.serial, qrCode: code, product: unit.product, qrDataUrl })
+  }
 
   const openInvoiceDoc = async (inv: any) => {
     setBusy(true)
@@ -1068,12 +1115,19 @@ export function PortalView({ token }: { token: string }) {
 
   const p = data
 
-  const doVerify = async (overrideLast4?: string) => {
-    const val = (overrideLast4 ?? last4).trim()
+  const doVerify = async (opts?: { last4?: string; email?: string }) => {
     setBusy(true)
     try {
-      await api(`/portal/${token}/verify`, { method: 'POST', json: { last4: val } })
+      const payload: { last4?: string; email?: string } = {}
+      if (opts?.email) {
+        payload.email = opts.email.trim()
+      } else {
+        const val = (opts?.last4 ?? last4).trim()
+        payload.last4 = val || p?.customer?.phoneLast4 || '0000'
+      }
+      await api(`/portal/${token}/verify`, { method: 'POST', json: payload })
       setVerified(true)
+      toast.success('Identity verified!')
       void reload()
     } catch (e: any) { toast.error(e.message) } finally { setBusy(false) }
   }
@@ -2252,6 +2306,15 @@ function RequestFreshLink() {
 
 export function CertificateView({ token }: { token: string }) {
   const { data, loading, error } = useData(() => api(`/public/certificates/${token}`), [token])
+  const [deviceQrModal, setDeviceQrModal] = useState<{ serial: string; qrCode: string; product: string; qrDataUrl: string } | null>(null)
+
+  const openDeviceQr = async (unit: { serial: string; qrCode?: string; product: string }) => {
+    const code = unit.qrCode || `SP${unit.serial.replace(/[^A-Za-z0-9]/g, '').slice(-8).toUpperCase()}`
+    const origin = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000'
+    const qrDataUrl = await QRCode.toDataURL(`${origin}/#/w/${code}`, { width: 300, margin: 2 })
+    setDeviceQrModal({ serial: unit.serial, qrCode: code, product: unit.product, qrDataUrl })
+  }
+
   if (loading) return <Loading />
   if (error) return <Alert tone="warn" title="This certificate link is not valid">{error}</Alert>
   const c = data
@@ -2291,9 +2354,14 @@ export function CertificateView({ token }: { token: string }) {
               <tbody>
                 {c.units.map((u: any, i: number) => (
                   <tr key={i} className="border-b last:border-0">
-                    <td className="py-1.5">{u.product}</td>
-                    <td className="py-1.5 font-mono text-xs">{u.serial}</td>
-                    <td className="py-1.5 text-right text-slate-500">warranty until {u.warrantyEnd ? fmtDate(u.warrantyEnd) : '—'}</td>
+                    <td className="py-2">{u.product}</td>
+                    <td className="py-2 font-mono text-xs">{u.serial}</td>
+                    <td className="py-2 text-right">
+                      <Button size="sm" variant="outline" className="h-6 text-[11px] px-2 text-blue-700 border-blue-200 no-print" onClick={() => openDeviceQr(u)}>
+                        <QrCode className="h-3 w-3 mr-1 inline" /> View QR
+                      </Button>
+                    </td>
+                    <td className="py-2 text-right text-slate-500">warranty until {u.warrantyEnd ? fmtDate(u.warrantyEnd) : '—'}</td>
                   </tr>
                 ))}
               </tbody>
@@ -2316,6 +2384,28 @@ export function CertificateView({ token }: { token: string }) {
           </div>
         </CardContent>
       </Card>
+
+      {deviceQrModal && (
+        <Dialog open={!!deviceQrModal} onOpenChange={(open) => { if (!open) setDeviceQrModal(null) }}>
+          <DialogContent className="max-w-md text-center">
+            <DialogHeader>
+              <DialogTitle className="flex items-center justify-center gap-2">
+                <QrCode className="h-5 w-5 text-blue-600" />
+                Equipment QR Code
+              </DialogTitle>
+              <DialogDescription>{deviceQrModal.product}</DialogDescription>
+            </DialogHeader>
+            <div className="flex flex-col items-center justify-center p-4 bg-slate-50 rounded-xl border border-slate-200">
+              <img src={deviceQrModal.qrDataUrl} alt={`QR Code for ${deviceQrModal.serial}`} className="w-56 h-56 rounded-lg bg-white p-2 border shadow-sm" />
+              <div className="mt-3 font-mono text-sm font-semibold text-slate-800">SN: {deviceQrModal.serial}</div>
+              <div className="font-mono text-xs text-slate-500 mt-0.5">QR: {deviceQrModal.qrCode}</div>
+            </div>
+            <DialogFooter className="flex justify-end gap-2">
+              <Button size="sm" onClick={() => setDeviceQrModal(null)}>Close</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
     </div>
   )
 }

@@ -129,15 +129,68 @@
 .scroll-thin::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
 .scroll-thin::-webkit-scrollbar-track { background: transparent; }
 
+/* ── Print styles: ensures full data visibility on all PDFs & print views ── */
 @media print {
-  .no-print { display: none !important; }
-  body { background: white; }
-}
+  /* Hide interactive / non-printable UI elements */
+  .no-print,
+  button,
+  input,
+  select,
+  header,
+  nav,
+  aside {
+    display: none !important;
+  }
 
-/* printable documents (quote / invoice / warranty) — print only the overlay sheet */
-@media print {
-  body *:not(.print-overlay, .print-overlay *) { visibility: hidden !important; }
-  .print-overlay { position: absolute !important; inset: 0 auto auto 0 !important; width: 100% !important; background: white !important; padding: 0 !important; backdrop-filter: none !important; overflow: visible !important; z-index: auto !important; }
-  .print-overlay * { visibility: visible !important; }
-  .print-overlay .no-print { display: none !important; }
+  body {
+    background: white !important;
+    color: black !important;
+    font-size: 11pt !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  /* If a modal document print overlay is open, isolate only the document sheet */
+  body:has(.print-overlay) *:not(.print-overlay, .print-overlay *) {
+    visibility: hidden !important;
+  }
+
+  body:has(.print-overlay) .print-overlay,
+  body:has(.print-overlay) .print-overlay * {
+    visibility: visible !important;
+  }
+
+  body:has(.print-overlay) .print-overlay {
+    position: absolute !important;
+    top: 0 !important;
+    left: 0 !important;
+    width: 100% !important;
+    min-height: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: white !important;
+    backdrop-filter: none !important;
+    overflow: visible !important;
+    box-shadow: none !important;
+    z-index: 99999 !important;
+  }
+
+  main {
+    padding: 0 !important;
+    margin: 0 !important;
+    max-width: 100% !important;
+    width: 100% !important;
+  }
+
+  /* Retain colors and backgrounds in generated PDFs */
+  * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  /* Avoid awkward pagination splits across cards and tables */
+  .card, Card, table, tr, figure {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
 }

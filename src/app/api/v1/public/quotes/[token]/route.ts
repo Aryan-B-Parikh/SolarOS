@@ -38,6 +38,6 @@ function serializeQuote(q: any) {
         }
       : null,
     customerName: q.lead?.customer?.name ?? null,
-    acceptedName: q.acceptedName, rejectReason: q.rejectReason,
+    acceptedName: q.acceptedName, acceptedAt: q.acceptedAt, rejectReason: q.rejectReason, rejectedAt: q.rejectedAt,
   }
 }

@@ -209,7 +209,7 @@ async function aiSummary(result: ReturnType<typeof calculateAssessment>, shading
 }
 
 function fallbackSummary(result: ReturnType<typeof calculateAssessment>): AiSummaryResult {
-  const inr = (p: number) => 'Rs ' + Math.round(p / 100).toLocaleString('en-IN')
+  const inr = (p: number) => '₹' + Math.round(p / 100).toLocaleString('en-IN')
   const summary = `Based on your electricity consumption and available roof space, a ${result.recommendedKw} kW system is recommended; estimated annual generation is about ${Math.round(result.annualGenerationKwh).toLocaleString('en-IN')} kWh and estimated annual savings are approximately ${inr(result.annualSavingsPaise)}. Your roof measurements and sanctioned load should be verified before final approval.`
   const risks: string[] = []
   if (result.flags.includes('ROOF_TOO_SMALL')) risks.push('Roof area limits the system size')

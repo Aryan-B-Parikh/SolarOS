@@ -181,7 +181,7 @@ export async function approveDiscount(quoteId: string, actorId: string) {
 }
 
 function moneyRs(paise: number): string {
-  return `Rs ${(paise / 100).toLocaleString('en-IN')}`
+  return `₹${(paise / 100).toLocaleString('en-IN')}`
 }
 
 export async function sendQuote(quoteId: string, actorId: string) {

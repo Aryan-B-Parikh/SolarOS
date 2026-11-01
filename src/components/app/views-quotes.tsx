@@ -215,7 +215,7 @@ function QuoteBuilder({ lead, onReload }: { lead: any; onReload: () => void }) {
               <CardHeader className="pb-3"><CardTitle className="text-base">3 · Pricing</CardTitle></CardHeader>
               <CardContent className="space-y-3">
                 <div className="space-y-1">
-                  <Label>Discount (Rs) — your limit is {discountLimitBp / 100}% = {money(Math.round(preview.subtotalPaise * (discountLimitBp / 10000)))}</Label>
+                  <Label>Discount (₹) — your limit is {discountLimitBp / 100}% = {money(Math.round(preview.subtotalPaise * (discountLimitBp / 10000)))}</Label>
                   <Input type="number" value={discountRs} onChange={(e) => setDiscountRs(Number(e.target.value))} />
                   <div className="h-1.5 rounded-full bg-slate-100 overflow-hidden">
                     <div className={cn('h-full', overLimit ? 'bg-red-500' : 'bg-blue-600')} style={{ width: `${Math.min(100, (discountRs / Math.max(1, discountLimit)) * 100)}%` }} />

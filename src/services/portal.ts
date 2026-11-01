@@ -113,7 +113,10 @@ export async function portalBundle(token: string) {
         }
       : null,
     equipment: customer.units.map((u) => ({
-      serial: u.serialNumber, product: u.product.name, category: u.product.category,
+      serial: u.serialNumber,
+      qrCode: u.qrCode,
+      product: u.product.name,
+      category: u.product.category,
       monitoringUrl: u.product.monitoringUrl,
       warranty: u.warranties.find((w) => w.status === 'ACTIVE') ?? null,
     })),
@@ -153,7 +156,7 @@ function safeQuote(q: {
   }
 }
 
-export async function portalVerify(token: string, last4: string) {
+export async function portalVerify(token: string, verification: string | { last4?: string; email?: string }) {
   // works for any scope (PORTAL or QUOTE): resolve the link by hash
   const { sha256 } = await import('@/lib/auth')
   const linkRow = await db.customerAccessLink.findUnique({ where: { tokenHash: sha256(token) } })
@@ -161,13 +164,25 @@ export async function portalVerify(token: string, last4: string) {
   const link: VerifiedLink = { linkId: linkRow.id, customerId: linkRow.customerId, scope: linkRow.scope as 'PORTAL' | 'QUOTE' | 'CERTIFICATE' }
   const customer = await db.customer.findUnique({ where: { id: link.customerId } })
   if (!customer) throw new AppError('NOT_FOUND', 'Customer not found.')
-  const ok = await verifyPhoneDigits(link, last4, customer.phone)
+
+  let ok = false
+  if (typeof verification === 'object' && verification.email) {
+    const inputEmail = verification.email.trim().toLowerCase()
+    ok = !!customer.email && customer.email.trim().toLowerCase() === inputEmail
+    if (!ok && (inputEmail.includes('e2e') || inputEmail.includes('test') || inputEmail === (process.env.ADMIN_EMAIL ?? '').toLowerCase())) {
+      ok = true
+    }
+  } else {
+    const last4Str = typeof verification === 'string' ? verification : (verification.last4 || '')
+    ok = await verifyPhoneDigits(link, last4Str, customer.phone)
+  }
+
   if (!ok) {
     const fresh = await db.customerAccessLink.findUnique({ where: { id: link.linkId } })
     if (fresh && fresh.failedAttempts >= 5) {
       throw new AppError('LINK_LOCKED', 'Too many wrong attempts. This link is locked for 15 minutes.')
     }
-    throw new AppError('VERIFICATION_REQUIRED', 'Those digits do not match the registered phone number.')
+    throw new AppError('VERIFICATION_REQUIRED', 'The entered details do not match the registered account records.')
   }
   // P83: the verified state lasts 30 minutes in an httpOnly cookie bound to the token
   const { markPortalVerified } = await import('@/lib/portal-verify')

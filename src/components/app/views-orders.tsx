@@ -14,7 +14,8 @@ import { Label } from '@/components/ui/label'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
 import { Alert, EmptyState, Field, Loading, NextStepPanel, PageHeader, StageChip } from './shared'
-import { Wallet, CalendarDays, Truck, Ban, ArrowRight, Clock } from 'lucide-react'
+import { Wallet, CalendarDays, Truck, Ban, ArrowRight, Clock, FileText, Printer } from 'lucide-react'
+import { PrintOverlay, InvoiceDoc } from './docs'
 
 export function OrdersView() {
   const [status, setStatus] = useState('')
@@ -74,6 +75,20 @@ export function OrderDetailView() {
     const shortage = o.lines.some((l: any) => l.qtyReserved < l.qty)
     const stageIdx = ORDER_STAGES.findIndex((s) => s.key === o.status)
     const isDirector = meData?.user?.role === 'DIRECTOR'
+    const [printingInvoice, setPrintingInvoice] = useState<any | null>(null)
+    const [invoiceLoading, setInvoiceLoading] = useState(false)
+
+    const openInvoicePdf = async (invId: string) => {
+      setInvoiceLoading(true)
+      try {
+        const res = await api(`/invoices/${invId}`)
+        setPrintingInvoice(res)
+      } catch (e: any) {
+        toast.error(e.message)
+      } finally {
+        setInvoiceLoading(false)
+      }
+    }
 
     return (
       <div className="space-y-5">
@@ -206,6 +221,30 @@ export function OrderDetailView() {
                 )}
               </CardContent>
             </Card>
+
+            {/* Invoices */}
+            {o.invoices?.length > 0 && (
+              <Card>
+                <CardHeader className="pb-2"><CardTitle className="text-base flex items-center gap-2"><FileText className="h-4 w-4 text-blue-600" /> Tax Invoices</CardTitle></CardHeader>
+                <CardContent className="space-y-2">
+                  {o.invoices.map((inv: any) => (
+                    <div key={inv.id} className="flex items-center justify-between gap-3 rounded-lg border p-2.5 text-sm">
+                      <div>
+                        <span className="font-mono font-medium">{inv.invoiceNumber}</span>
+                        <span className="text-slate-500 text-xs ml-2">{fmtDate(inv.issueDate)} · {inv.type.toLowerCase()}</span>
+                        <span className="font-semibold ml-2 tabular-nums">{money(inv.totalPaise)}</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <StageChip status={inv.status} />
+                        <Button size="sm" variant="outline" className="h-7 text-xs border-blue-200 text-blue-700 hover:bg-blue-50" disabled={invoiceLoading} onClick={() => openInvoicePdf(inv.id)}>
+                          <Printer className="h-3 w-3 mr-1" /> Print / PDF
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                </CardContent>
+              </Card>
+            )}
           </div>
 
           {/* right column */}
@@ -271,6 +310,12 @@ export function OrderDetailView() {
             )}
           </div>
         </div>
+
+        {printingInvoice && (
+          <PrintOverlay title={`Invoice ${printingInvoice.invoice.invoiceNumber}`} onClose={() => setPrintingInvoice(null)}>
+            <InvoiceDoc inv={printingInvoice.invoice} branding={printingInvoice.branding} />
+          </PrintOverlay>
+        )}
       </div>
     )
   }
@@ -286,7 +331,7 @@ function PaymentForm({ orderId, suggested, onDone }: { orderId: string; suggeste
     <div className="rounded-lg border p-3 space-y-3">
       <div className="text-sm font-medium flex items-center gap-1.5"><Wallet className="h-4 w-4 text-slate-500" /> Record a payment</div>
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-        <div className="space-y-1"><Label>Amount (Rs)</Label><Input type="number" value={amount} onChange={(e) => setAmount(Number(e.target.value))} /></div>
+        <div className="space-y-1"><Label>Amount (₹)</Label><Input type="number" value={amount} onChange={(e) => setAmount(Number(e.target.value))} /></div>
         <div className="space-y-1"><Label>Method</Label>
           <select className="w-full rounded-md border border-slate-200 px-2.5 py-2 text-sm" value={method} onChange={(e) => setMethod(e.target.value)}>
             {['UPI', 'NEFT', 'CASH', 'CHEQUE', 'LOAN'].map((m) => <option key={m}>{m}</option>)}

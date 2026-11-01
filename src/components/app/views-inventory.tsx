@@ -253,7 +253,7 @@ export function ReceiveView() {
                       </select>
                     </div>
                     <div className="space-y-1"><Label>Qty</Label><Input type="number" min={1} value={l.qty} onChange={(e) => setLine(i, { qty: Number(e.target.value) })} disabled={product?.isSerialized && l.serialNumbers.length > 0} /></div>
-                    <div className="space-y-1"><Label>Unit cost (Rs)</Label><Input type="number" value={l.unitCostRupees} onChange={(e) => setLine(i, { unitCostRupees: Number(e.target.value) })} /></div>
+                    <div className="space-y-1"><Label>Unit cost (₹)</Label><Input type="number" value={l.unitCostRupees} onChange={(e) => setLine(i, { unitCostRupees: Number(e.target.value) })} /></div>
                   </div>
                   {product?.isSerialized && (
                     <div className="space-y-1.5">
@@ -505,7 +505,7 @@ export function PurchasingView() {
                   </select>
                 </div>
                 <div className="space-y-1"><Label>Qty</Label><Input type="number" value={l.qty} onChange={(e) => setPoDraft({ ...poDraft, lines: poDraft.lines.map((x, j) => j === i ? { ...x, qty: Number(e.target.value) } : x) })} /></div>
-                <div className="space-y-1"><Label>Unit cost (Rs)</Label><Input type="number" value={l.unitCostRupees} onChange={(e) => setPoDraft({ ...poDraft, lines: poDraft.lines.map((x, j) => j === i ? { ...x, unitCostRupees: Number(e.target.value) } : x) })} /></div>
+                <div className="space-y-1"><Label>Unit cost (₹)</Label><Input type="number" value={l.unitCostRupees} onChange={(e) => setPoDraft({ ...poDraft, lines: poDraft.lines.map((x, j) => j === i ? { ...x, unitCostRupees: Number(e.target.value) } : x) })} /></div>
               </div>
             ))}
             <div className="flex justify-between">

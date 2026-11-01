@@ -176,7 +176,7 @@ export async function createLeadFromEnquiry(input: EnquiryInput, opts: { request
 
   await audit({ actorType: input.actorId ? 'USER' : 'SYSTEM', actorId: input.actorId, entityType: 'lead', entityId: lead.id, action: 'create', after: { leadNumber, source: input.source } })
 
-  return { lead, customer, isNewCustomer, duplicateFlags: flags.length, portalToken: isNewCustomer ? token : null }
+  return { lead, customer, isNewCustomer, duplicateFlags: flags.length, portalToken: token }
 }
 
 export function maskPhone(phone: string): string {
