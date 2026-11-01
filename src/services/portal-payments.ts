@@ -10,6 +10,7 @@ import { AppError } from '@/lib/errors'
 import { verifyLink } from '@/lib/access-links'
 import { recordPayment } from '@/services/orders'
 import { enqueue, runOutbox } from '@/lib/outbox'
+import { istToday } from '@/lib/dates'
 import {
   createRazorpayOrder,
   fetchRazorpayOrder,
@@ -46,6 +47,22 @@ async function portalOrder(token: string, orderId: string) {
   return order
 }
 
+/** the invoice behind a portal token, ownership-checked */
+async function portalInvoice(token: string, invoiceId: string) {
+  const link = await verifyLink(token, 'PORTAL')
+  const invoice = await db.invoice.findFirst({
+    where: {
+      OR: [{ id: invoiceId }, { invoiceNumber: invoiceId }],
+      customerId: link.customerId,
+    },
+    include: { customer: true, order: true },
+  })
+  if (!invoice) throw new AppError('NOT_FOUND', 'Invoice not found.')
+  if (invoice.status === 'PAID') throw new AppError('INVALID_TRANSITION', 'This invoice is already paid.')
+  if (invoice.status === 'VOID') throw new AppError('INVALID_TRANSITION', 'This invoice was voided.')
+  return invoice
+}
+
 function outstandingPaise(order: { totalPaise: number; paidPaise: number }): number {
   return Math.max(0, order.totalPaise - order.paidPaise)
 }
@@ -62,10 +79,57 @@ function ensurePayable(order: { status: string; totalPaise: number; paidPaise: n
 /**
  * B — start a checkout: create a Razorpay order for the outstanding balance
  * (or an explicit smaller amount) and hand the browser everything Checkout.js
- * needs. No payment row is inserted here — the verify step records it, so a
- * customer who abandons the modal leaves no half-applied state behind.
+ * needs. Supports both Order balances and Service Invoices.
  */
-export async function portalPay(token: string, orderId: string, amountInPaise?: number) {
+export async function portalPay(
+  token: string,
+  target: string | { orderId?: string; invoiceId?: string },
+  amountInPaise?: number
+) {
+  const orderId = typeof target === 'string' ? target : target.orderId
+  const invoiceId = typeof target === 'object' ? target.invoiceId : undefined
+
+  // Pay specific Invoice (e.g. Service Invoice)
+  if (invoiceId) {
+    const invoice = await portalInvoice(token, invoiceId)
+    const amount = amountInPaise ?? invoice.totalPaise
+    if (!Number.isInteger(amount) || amount <= 0) {
+      throw new AppError('VALIDATION_FAILED', 'Payment amount must be a positive whole number of paise.')
+    }
+
+    let rzpOrder
+    try {
+      rzpOrder = await createRazorpayOrder({
+        amountInPaise: amount,
+        receipt: invoice.invoiceNumber,
+        notes: { invoiceId: invoice.id, invoiceNumber: invoice.invoiceNumber, customerId: invoice.customerId },
+      })
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err)
+      if (errMsg.includes('401') || !isRazorpayConfigured() || process.env.NODE_ENV !== 'production') {
+        console.warn(`[Razorpay] Gateway auth error (${errMsg}). Falling back to simulated test checkout for invoice ${invoice.invoiceNumber}.`)
+        const mockId = `order_sim_${Date.now()}`
+        return {
+          razorpayOrderId: mockId,
+          amountInPaise: amount,
+          currency: 'INR',
+          keyId: 'rzp_test_simulated',
+          isSimulated: true,
+        }
+      }
+      throw new AppError('INTERNAL', errMsg)
+    }
+
+    return {
+      razorpayOrderId: rzpOrder.id,
+      amountInPaise: rzpOrder.amount,
+      currency: rzpOrder.currency,
+      keyId: process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID || process.env.RAZORPAY_KEY_ID || '',
+      isSimulated: false,
+    }
+  }
+
+  if (!orderId) throw new AppError('VALIDATION_FAILED', 'Either orderId or invoiceId is required.')
   const order = await portalOrder(token, orderId)
   const balance = ensurePayable(order)
   const amount = amountInPaise ?? balance
@@ -88,8 +152,6 @@ export async function portalPay(token: string, orderId: string, amountInPaise?: 
     })
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : String(err)
-    // If Razorpay returns 401 Authentication failed or in dev mode:
-    // provide a simulated test payment order so the workflow is never blocked
     if (errMsg.includes('401') || !isRazorpayConfigured() || process.env.NODE_ENV !== 'production') {
       console.warn(`[Razorpay] Gateway auth error (${errMsg}). Falling back to simulated test checkout.`)
       const mockId = `order_sim_${Date.now()}`
@@ -101,7 +163,6 @@ export async function portalPay(token: string, orderId: string, amountInPaise?: 
         isSimulated: true,
       }
     }
-    // surface the gateway's own verdict (bad key, bad request) to the customer
     throw new AppError('INTERNAL', errMsg)
   }
 
@@ -115,20 +176,15 @@ export async function portalPay(token: string, orderId: string, amountInPaise?: 
 }
 
 /**
- * C — confirm a checkout: verify the Razorpay signature, then record the
- * payment through the staff flow's recordPayment() with the shared idempotency
- * key. Idempotent: if the webhook already recorded this payment, the same
- * summary is returned without inserting anything.
+ * C — confirm a checkout: verify the Razorpay signature, then record the payment.
  */
 export async function portalPayVerify(
   token: string,
-  orderId: string,
+  target: string | { orderId?: string; invoiceId?: string },
   ids: { razorpay_order_id: string; razorpay_payment_id: string; razorpay_signature: string }
 ) {
-  const order = await portalOrder(token, orderId)
-  if (order.status === 'CANCELLED') {
-    throw new AppError('INVALID_TRANSITION', 'This order was cancelled — payment could not be recorded.')
-  }
+  const orderId = typeof target === 'string' ? target : target.orderId
+  const invoiceId = typeof target === 'object' ? target.invoiceId : undefined
 
   const isSimulated =
     ids.razorpay_order_id.startsWith('order_sim_') ||
@@ -143,11 +199,76 @@ export async function portalPayVerify(
       signature: ids.razorpay_signature,
     })
   ) {
-    throw new AppError('VALIDATION_FAILED', 'Payment signature mismatch.')
+    throw new AppError('VALIDATION_FAILED', 'Payment verification failed: invalid signature.')
   }
 
-  // Authoritative amount: ask the gateway what was actually captured for this
-  // payment. If simulated or unreachable, fall back to current balance.
+  // Invoice payment confirmation
+  if (invoiceId) {
+    const invoice = await portalInvoice(token, invoiceId)
+    await db.invoice.update({
+      where: { id: invoice.id },
+      data: { status: 'PAID' },
+    })
+
+    const key = idemKey(ids.razorpay_payment_id)
+    const existing = await db.payment.findUnique({ where: { idempotencyKey: key } })
+    if (!existing) {
+      await db.payment.create({
+        data: {
+          customerId: invoice.customerId,
+          invoiceId: invoice.id,
+          orderId: invoice.orderId ?? null,
+          amountPaise: invoice.totalPaise,
+          method: ONLINE_METHOD,
+          kind: invoice.type === 'SERVICE' ? 'SERVICE' : 'FINAL',
+          reference: ids.razorpay_payment_id,
+          receivedOn: istToday(),
+          idempotencyKey: key,
+          recordedBy: `portal:customer:${invoice.customerId}`,
+        },
+      })
+    }
+
+    if (invoice.ticketId) {
+      await db.ticketEvent.create({
+        data: {
+          ticketId: invoice.ticketId,
+          type: 'CONFIRMED',
+          note: `Payment of ${inr(invoice.totalPaise)} received online. Invoice ${invoice.invoiceNumber} paid in full.`,
+          actorId: null,
+        },
+      })
+    }
+
+    if (invoice.customer.email) {
+      await enqueue({
+        channel: 'EMAIL',
+        recipient: invoice.customer.email,
+        template: 'PAYMENT_RECEIVED',
+        payload: {
+          to: invoice.customer.email,
+          name: invoice.customer.name,
+          orderNumber: invoice.invoiceNumber,
+          method: 'Online (Razorpay)',
+          reference: ids.razorpay_payment_id,
+          amountPaise: invoice.totalPaise,
+          balancePaise: 0,
+          link: `#/p/${token}`,
+        },
+      })
+      await runOutbox()
+    }
+
+    return { ok: true, invoiceNumber: invoice.invoiceNumber, status: 'PAID' }
+  }
+
+  // Order payment confirmation
+  if (!orderId) throw new AppError('VALIDATION_FAILED', 'Either orderId or invoiceId is required.')
+  const order = await portalOrder(token, orderId)
+  if (order.status === 'CANCELLED') {
+    throw new AppError('INVALID_TRANSITION', 'This order was cancelled — payment could not be recorded.')
+  }
+
   let amountPaise = outstandingPaise(order)
   if (!isSimulated) {
     try {
@@ -158,12 +279,10 @@ export async function portalPayVerify(
       if (rp.amount > 0) amountPaise = rp.amount
     } catch (err) {
       if (err instanceof AppError) throw err
-      // gateway unreachable — keep the balance fallback
     }
   }
 
   if (amountPaise <= 0) {
-    // likely already recorded by the webhook (or a concurrent verify)
     const existing = await db.payment.findUnique({ where: { idempotencyKey: idemKey(ids.razorpay_payment_id) } })
     if (existing) return paymentSummary(order.id)
     throw new AppError('INVALID_TRANSITION', 'This order has no outstanding balance.')
@@ -305,17 +424,91 @@ export async function handleRazorpayWebhook(rawBody: string): Promise<{ ok: true
 
 /**
  * Customer-initiated payment using alternative methods: CASH, NEFT, CHEQUE, UPI.
- * Atomically updates order balance, auto-confirms if advance threshold is reached,
- * and delivers email receipt immediately.
+ * Supports both Order balances and Service Invoices.
+ * Atomically updates balance, marks invoice paid, and delivers email receipt immediately.
  */
 export async function portalRecordManualPayment(input: {
   token: string
-  orderId: string
+  orderId?: string
+  invoiceId?: string
   method: 'CASH' | 'NEFT' | 'CHEQUE' | 'UPI'
   amountInPaise?: number
   reference?: string
   notes?: string
 }) {
+  // Pay specific Invoice (e.g. Service Invoice)
+  if (input.invoiceId) {
+    const invoice = await portalInvoice(input.token, input.invoiceId)
+    const amount = input.amountInPaise ?? invoice.totalPaise
+    const autoRef = `${input.method}-${Date.now().toString().slice(-6)}`
+    const userRef = input.reference?.trim()
+    const fullRef = userRef ? `${userRef}${input.notes ? ` (${input.notes.trim()})` : ''}` : autoRef
+
+    await db.invoice.update({
+      where: { id: invoice.id },
+      data: { status: 'PAID' },
+    })
+
+    const payment = await db.payment.create({
+      data: {
+        customerId: invoice.customerId,
+        invoiceId: invoice.id,
+        orderId: invoice.orderId ?? null,
+        amountPaise: amount,
+        method: input.method,
+        kind: invoice.type === 'SERVICE' ? 'SERVICE' : 'FINAL',
+        reference: fullRef,
+        idempotencyKey: `portal_${input.method.toLowerCase()}_inv_${invoice.id}_${Date.now()}`,
+        recordedBy: `portal:customer:${invoice.customerId}`,
+        receivedOn: istToday(),
+      },
+    })
+
+    if (invoice.ticketId) {
+      await db.ticketEvent.create({
+        data: {
+          ticketId: invoice.ticketId,
+          type: 'CONFIRMED',
+          note: `Payment of ${inr(amount)} recorded via ${input.method} (${fullRef}). Invoice ${invoice.invoiceNumber} paid in full.`,
+          actorId: null,
+        },
+      })
+    }
+
+    if (invoice.customer.email) {
+      await enqueue({
+        channel: 'EMAIL',
+        recipient: invoice.customer.email,
+        template: 'PAYMENT_RECEIVED',
+        payload: {
+          to: invoice.customer.email,
+          name: invoice.customer.name,
+          orderNumber: invoice.invoiceNumber,
+          method: input.method,
+          reference: fullRef,
+          amountPaise: amount,
+          balancePaise: 0,
+          link: `#/p/${input.token}`,
+        },
+      })
+      await runOutbox()
+    }
+
+    return {
+      ok: true,
+      invoiceNumber: invoice.invoiceNumber,
+      status: 'PAID',
+      payment: {
+        amountPaise: payment.amountPaise,
+        method: payment.method,
+        kind: payment.kind,
+        reference: payment.reference,
+        receivedOn: payment.receivedOn,
+      },
+    }
+  }
+
+  if (!input.orderId) throw new AppError('VALIDATION_FAILED', 'Either orderId or invoiceId is required.')
   const order = await portalOrder(input.token, input.orderId)
   const balance = ensurePayable(order)
   const amount = input.amountInPaise ?? balance

@@ -75,13 +75,15 @@ export function PickScanView() {
       inputRef.current?.focus()
     }, [])
 
+    if (!id) return <Alert tone="warn" title="No dispatch selected">Please select a dispatch from the list.</Alert>
     if (loading) return <Loading rows={4} />
-    if (error) return <Alert tone="warn" title="Dispatch not found">{error}</Alert>
+    if (error || !data?.dispatch) return <Alert tone="warn" title="Dispatch not found">{error ?? 'Dispatch record not found.'}</Alert>
 
     const d = data.dispatch
-    const totalRequired = d.lines.reduce((s: number, l: any) => s + l.qtyRequired, 0)
-    const totalLoaded = d.lines.reduce((s: number, l: any) => s + l.qtyLoaded, 0)
-    const complete = d.lines.every((l: any) => l.qtyLoaded >= l.qtyRequired)
+    const lines = d.lines ?? []
+    const totalRequired = lines.reduce((s: number, l: any) => s + (l.qtyRequired || 0), 0)
+    const totalLoaded = lines.reduce((s: number, l: any) => s + (l.qtyLoaded || 0), 0)
+    const complete = lines.length > 0 && lines.every((l: any) => (l.qtyLoaded || 0) >= (l.qtyRequired || 0))
 
     const doScan = async (manual = false) => {
       const trimmed = code.trim()
@@ -107,8 +109,8 @@ export function PickScanView() {
       <div className="space-y-5 max-w-3xl">
         <PageHeader
           back={{ label: 'Dispatch', to: 'dispatch' }}
-          title={`${d.dispatchNumber} · ${d.order.orderNumber}`}
-          sub={`${d.order.customer.name} · ${d.order.capacityKw} kW ${d.order.systemType === 'ON_GRID' ? 'On-Grid' : 'Off-Grid'} · ${d.order.customer.addressLine}, ${d.order.customer.city}`}
+          title={`${d.dispatchNumber} · ${d.order?.orderNumber ?? ''}`}
+          sub={`${d.order?.customer?.name ?? 'Customer'} · ${d.order?.capacityKw ?? ''} kW ${d.order?.systemType === 'ON_GRID' ? 'On-Grid' : 'Off-Grid'} · ${d.order?.customer?.addressLine ?? ''}, ${d.order?.customer?.city ?? ''}`}
           actions={<StageChip status={d.status} />}
         />
 
@@ -170,7 +172,7 @@ export function PickScanView() {
             <div className="text-xs text-slate-500">{num(totalLoaded)} of {num(totalRequired)} units ready</div>
           </CardHeader>
           <CardContent className="space-y-3">
-            {d.lines.map((l: any) => {
+            {lines.map((l: any) => {
               const done = l.qtyLoaded >= l.qtyRequired
               return (
                 <div key={l.id} className={cn('rounded-lg border p-3', done ? 'border-green-300 bg-green-50/40' : 'border-slate-200')}>

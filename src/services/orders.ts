@@ -79,7 +79,7 @@ export async function recordPayment(input: {
   if (input.amountPaise <= 0) throw new AppError('VALIDATION_FAILED', 'Payment amount must be above zero.')
   if (input.idempotencyKey) {
     const existing = await db.payment.findUnique({ where: { idempotencyKey: input.idempotencyKey } })
-    if (existing) return { payment: existing, order: await db.order.findUnique({ where: { id: existing.orderId } }), replayed: true }
+    if (existing) return { payment: existing, order: existing.orderId ? await db.order.findUnique({ where: { id: existing.orderId } }) : null, replayed: true }
   }
   const order = await db.order.findUnique({ where: { id: input.orderId }, include: { customer: true } })
   if (!order) throw new AppError('NOT_FOUND', 'Order not found.')
@@ -121,7 +121,10 @@ export async function recordPayment(input: {
 /** FR-4.x payment reversal: marks the original REVERSED, records a reversal
  *  row and pulls the order balance back. Used for bounced cheques/refunds. */
 export async function reversePayment(paymentId: string, reason: string, actorId: string) {
-  const original = await db.payment.findUnique({ where: { id: paymentId }, include: { order: { include: { customer: true } } } })
+  const original = await db.payment.findUnique({
+    where: { id: paymentId },
+    include: { order: { include: { customer: true } }, invoice: { include: { customer: true } } },
+  })
   if (!original) throw new AppError('NOT_FOUND', 'Payment not found.')
   if (original.status !== 'RECEIVED') throw new AppError('INVALID_TRANSITION', 'Only a received payment can be reversed.')
   if (!reason || reason.length < 3) throw new AppError('VALIDATION_FAILED', 'A reversal reason is required.')
@@ -131,6 +134,8 @@ export async function reversePayment(paymentId: string, reason: string, actorId:
     const row = await tx.payment.create({
       data: {
         orderId: original.orderId,
+        invoiceId: original.invoiceId,
+        customerId: original.customerId,
         amountPaise: original.amountPaise,
         method: original.method,
         kind: 'REVERSAL',
@@ -141,22 +146,34 @@ export async function reversePayment(paymentId: string, reason: string, actorId:
         recordedBy: actorId,
       },
     })
-    await tx.order.update({
-      where: { id: original.orderId },
-      data: { paidPaise: Math.max(0, original.order.paidPaise - original.amountPaise) },
-    })
+    if (original.orderId && original.order) {
+      await tx.order.update({
+        where: { id: original.orderId },
+        data: { paidPaise: Math.max(0, original.order.paidPaise - original.amountPaise) },
+      })
+    } else if (original.invoiceId) {
+      await tx.invoice.update({
+        where: { id: original.invoiceId },
+        data: { status: 'ISSUED' },
+      })
+    }
     await audit({
       actorType: 'USER', actorId, entityType: 'payment', entityId: original.id, action: 'reverse',
       before: { status: 'RECEIVED' }, after: { status: 'REVERSED', reason, reversalId: row.id },
     }, tx)
     return row
   })
-  await enqueue({
-    channel: 'SMS',
-    recipient: original.order.customer.phone.slice(0, 6) + 'XXXX' + original.order.customer.phone.slice(-3),
-    template: 'PAYMENT_REVERSED',
-    payload: { to: original.order.customer.phone, name: original.order.customer.name, orderNumber: original.order.orderNumber, amount: original.amountPaise, reason },
-  })
+  const phone = original.order?.customer.phone ?? original.invoice?.customer?.phone
+  const name = original.order?.customer.name ?? original.invoice?.customer?.name ?? 'Customer'
+  const refNum = original.order?.orderNumber ?? original.invoice?.invoiceNumber ?? 'Payment'
+  if (phone) {
+    await enqueue({
+      channel: 'SMS',
+      recipient: phone.slice(0, 6) + 'XXXX' + phone.slice(-3),
+      template: 'PAYMENT_REVERSED',
+      payload: { to: phone, name, orderNumber: refNum, amount: original.amountPaise, reason },
+    })
+  }
   return { ok: true, reversalId: reversal.id }
 }
 

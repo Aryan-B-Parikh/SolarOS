@@ -19,7 +19,7 @@ import { Alert, Alert as AlertBox, EmptyState, Loading, WarrantyBar, PhotoThumb,
 import { PrintOverlay, QuoteDoc, InvoiceDoc, WarrantyDoc } from './docs'
 import { QrScannerModal } from './qr-scanner'
 import { Skeleton } from '@/components/ui/skeleton'
-import { CheckCircle2, ChevronLeft, ChevronRight, Circle, Sun, ShieldCheck, Wrench, Printer, Camera, FileText, Wallet, Clock, ArrowRight, Lock, RefreshCw, Phone, ArrowLeft, CreditCard, Loader2, Download, ExternalLink, QrCode, Building2, Banknote, Copy, Check } from 'lucide-react'
+import { CheckCircle2, ChevronLeft, ChevronRight, Circle, Sun, ShieldCheck, Wrench, Printer, Camera, FileText, Wallet, Clock, ArrowRight, Lock, RefreshCw, Phone, ArrowLeft, CreditCard, Loader2, Download, ExternalLink, QrCode, Building2, Banknote, Copy, Check, X, Receipt } from 'lucide-react'
 import QRCode from 'qrcode'
 
 // ── S1: enquiry form (public) ─────────────────────────────────────
@@ -1141,6 +1141,7 @@ export function PortalView({ token }: { token: string }) {
   const [printing, setPrinting] = useState<'invoice' | 'warranty' | null>(null)
   const [docData, setDocData] = useState<any>(null)
   const [deviceQrModal, setDeviceQrModal] = useState<{ serial: string; qrCode: string; product: string; qrDataUrl: string } | null>(null)
+  const [payingInvoice, setPayingInvoice] = useState<any | null>(null)
   const isVerified = verified || !!data?.verified || (typeof window !== 'undefined' && !!data?.customer)
 
   const openDeviceQr = async (unit: { serial: string; qrCode?: string; product: string }) => {
@@ -1426,6 +1427,32 @@ export function PortalView({ token }: { token: string }) {
                 <Field label="Balance due">{money(Math.max(0, p.order.totalPaise - p.order.paidPaise))}</Field>
               </div>
             )}
+            {/* Outstanding Service Invoices Banner */}
+            {p.invoices.some((inv: any) => inv.status !== 'PAID') && (
+              <div className="rounded-xl border border-emerald-300 bg-gradient-to-r from-emerald-50 via-teal-50/40 to-slate-50 p-4 shadow-sm flex items-center justify-between gap-3 flex-wrap">
+                <div>
+                  <div className="text-sm font-semibold text-emerald-950 flex items-center gap-1.5">
+                    <Receipt className="h-4 w-4 text-emerald-700" />
+                    Service &amp; Project Invoice Payment Due
+                  </div>
+                  <p className="text-xs text-emerald-800 mt-0.5">
+                    You have {p.invoices.filter((i: any) => i.status !== 'PAID').length} unpaid invoice{p.invoices.filter((i: any) => i.status !== 'PAID').length > 1 ? 's' : ''}. Choose online payment (UPI, card, netbanking) or cash/bank transfer.
+                  </p>
+                </div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  {p.invoices.filter((i: any) => i.status !== 'PAID').map((inv: any) => (
+                    <Button
+                      key={inv.id ?? inv.number}
+                      size="sm"
+                      className="bg-emerald-600 hover:bg-emerald-700 text-white font-medium text-xs shadow-sm h-8"
+                      onClick={() => setPayingInvoice(inv)}
+                    >
+                      <CreditCard className="h-3.5 w-3.5 mr-1" /> Pay {inv.number} ({money(inv.totalPaise)})
+                    </Button>
+                  ))}
+                </div>
+              </div>
+            )}
             {/* T2: pay the outstanding balance online (Razorpay Checkout, test mode) */}
             <PayOnlineCard token={token} order={p.order} reload={reload} />
             {(!isVerified && (p.invoices.length > 0 || !!p.order)) && (
@@ -1441,7 +1468,7 @@ export function PortalView({ token }: { token: string }) {
                   <Input className="w-28 tracking-widest" inputMode="numeric" maxLength={4} value={last4} onChange={(e) => setLast4(e.target.value.replace(/\D/g, ''))} placeholder={p.customer?.phoneLast4 ?? '••••'} aria-label="Last 4 digits of your phone" />
                   <Button size="sm" className="h-10" disabled={last4.length !== 4 || busy} onClick={() => doVerify()}>Verify</Button>
                   {p.customer?.phoneLast4 && (
-                    <Button size="sm" variant="outline" className="h-10 text-xs text-blue-700 border-blue-200 hover:bg-blue-50" onClick={() => { setLast4(p.customer.phoneLast4); void doVerify(p.customer.phoneLast4); }}>
+                    <Button size="sm" variant="outline" className="h-10 text-xs text-blue-700 border-blue-200 hover:bg-blue-50" onClick={() => { setLast4(p.customer.phoneLast4); void doVerify({ last4: p.customer.phoneLast4 }); }}>
                       1-Click Verify ({p.customer.phoneLast4})
                     </Button>
                   )}
@@ -1456,7 +1483,7 @@ export function PortalView({ token }: { token: string }) {
                       <thead><tr className="text-left text-xs text-slate-400 border-b">
                         <th className="py-2 pl-3 font-medium">Invoice</th><th className="py-2 px-2 font-medium">Date</th>
                         <th className="py-2 px-2 font-medium">Type</th><th className="py-2 px-2 font-medium text-right">Amount</th>
-                        <th className="py-2 px-2 font-medium text-right">Status</th><th className="py-2 pr-3 font-medium text-right">PDF</th>
+                        <th className="py-2 px-2 font-medium text-right">Status</th><th className="py-2 pr-3 font-medium text-right">PDF &amp; Payment</th>
                       </tr></thead>
                       <tbody>
                         {p.invoices.map((inv: any) => (
@@ -1466,7 +1493,20 @@ export function PortalView({ token }: { token: string }) {
                             <td className="py-2 px-2 capitalize">{inv.type.toLowerCase()}</td>
                             <td className="py-2 px-2 text-right tabular-nums font-medium">{money(inv.totalPaise)}</td>
                             <td className="py-2 px-2 text-right"><span className={cn('text-xs font-medium rounded px-1.5 py-0.5', inv.status === 'PAID' ? 'bg-green-50 text-green-700' : 'bg-amber-50 text-amber-700')}>{inv.status.toLowerCase()}</span></td>
-                            <td className="py-2 pr-3 text-right"><Button size="sm" variant="outline" className="h-7 text-xs" disabled={busy} onClick={() => openInvoiceDoc(inv)}><FileText className="h-3 w-3 mr-1" /> PDF</Button></td>
+                            <td className="py-2 pr-3 text-right">
+                              <div className="flex items-center justify-end gap-1.5">
+                                <Button size="sm" variant="outline" className="h-7 text-xs" disabled={busy} onClick={() => openInvoiceDoc(inv)}><FileText className="h-3 w-3 mr-1" /> PDF</Button>
+                                {inv.status !== 'PAID' && (
+                                  <Button
+                                    size="sm"
+                                    className="h-7 text-xs bg-emerald-600 hover:bg-emerald-700 text-white font-medium"
+                                    onClick={() => setPayingInvoice(inv)}
+                                  >
+                                    <CreditCard className="h-3 w-3 mr-1" /> Pay {money(inv.totalPaise)}
+                                  </Button>
+                                )}
+                              </div>
+                            </td>
                           </tr>
                         ))}
                       </tbody>
@@ -1484,6 +1524,24 @@ export function PortalView({ token }: { token: string }) {
           </CardContent>
         </Card>
       )}
+
+      {/* Invoice Payment Modal */}
+      <Dialog open={!!payingInvoice} onOpenChange={(open) => { if (!open) setPayingInvoice(null) }}>
+        <DialogContent className="max-w-2xl p-0 overflow-hidden border-0">
+          <DialogTitle className="sr-only">Pay Invoice {payingInvoice?.number}</DialogTitle>
+          {payingInvoice && (
+            <PayOnlineCard
+              token={token}
+              invoice={payingInvoice}
+              onClose={() => setPayingInvoice(null)}
+              reload={() => {
+                setPayingInvoice(null)
+                void reload()
+              }}
+            />
+          )}
+        </DialogContent>
+      </Dialog>
 
       {/* service requests */}
       <ServiceRequests token={token} verified={isVerified} onVerified={() => setVerified(true)} tickets={p.tickets} reload={reload} phoneLast4={p.customer?.phoneLast4} />
@@ -1557,20 +1615,36 @@ function loadRazorpayCheckout(): Promise<void> {
   })
 }
 
-/** "Pay now" card: creates a gateway order for the outstanding balance, opens
- *  Razorpay Checkout, confirms the payment server-side (signature check) and
+/** "Pay now" card: creates a gateway order for the outstanding balance or service invoice,
+ *  opens Razorpay Checkout, confirms the payment server-side (signature check) and
  *  refreshes the portal data so the new payment shows up immediately. */
-function PayOnlineCard({ token, order, reload }: {
+function PayOnlineCard({
+  token,
+  order,
+  invoice,
+  onClose,
+  reload,
+}: {
   token: string
-  order: { id: string; number: string; status: string; totalPaise: number; paidPaise: number } | null
+  order?: { id: string; number: string; status: string; totalPaise: number; paidPaise: number } | null
+  invoice?: { id: string; number: string; type: string; totalPaise: number; status: string } | null
+  onClose?: () => void
   reload: () => void
 }) {
+  const isInvoice = !!invoice
+  const outstanding = invoice
+    ? (invoice.status === 'PAID' ? 0 : invoice.totalPaise)
+    : (order ? Math.max(0, order.totalPaise - order.paidPaise) : 0)
+
+  const entityTitle = invoice ? `Invoice ${invoice.number}` : (order ? `Order ${order.number}` : '')
+  const entityBadge = invoice ? `Service (${invoice.type.toLowerCase()})` : (order?.status ?? '')
+
   const [activeTab, setActiveTab] = useState<'ONLINE' | 'CASH' | 'NEFT' | 'CHEQUE' | 'UPI'>('ONLINE')
   const [amountType, setAmountType] = useState<'FULL' | 'CUSTOM'>('FULL')
   const [customRupees, setCustomRupees] = useState('')
 
   // Specific method inputs
-  const [cashNote, setCashNote] = useState('Paid cash to technician at site')
+  const [cashNote, setCashNote] = useState(isInvoice ? 'Paid cash for service invoice' : 'Paid cash to technician at site')
   const [neftUtr, setNeftUtr] = useState('')
   const [neftBank, setNeftBank] = useState('')
   const [chequeNo, setChequeNo] = useState('')
@@ -1586,23 +1660,22 @@ function PayOnlineCard({ token, order, reload }: {
   const [payMethod, setPayMethod] = useState<'UPI' | 'CARD' | 'NETBANKING'>('UPI')
   const [processing, setProcessing] = useState(false)
 
-  const outstanding = order ? Math.max(0, order.totalPaise - order.paidPaise) : 0
-
-  const targetPaise = amountType === 'FULL'
+  const targetPaise = (amountType === 'FULL' || isInvoice)
     ? outstanding
     : Math.min(outstanding, Math.max(100, Math.round((parseFloat(customRupees) || 0) * 100)))
 
   // Generate UPI QR code dynamically when UPI tab or amount changes
   useEffect(() => {
     if (activeTab === 'UPI' && targetPaise > 0) {
-      const upiUrl = `upi://pay?pa=sunpower.solar@hdfcbank&pn=SunPower%20Solar&am=${(targetPaise / 100).toFixed(2)}&cu=INR&tn=Order%20${order?.number ?? ''}`
+      const note = invoice ? `Invoice ${invoice.number}` : `Order ${order?.number ?? ''}`
+      const upiUrl = `upi://pay?pa=sunpower.solar@hdfcbank&pn=SunPower%20Solar&am=${(targetPaise / 100).toFixed(2)}&cu=INR&tn=${encodeURIComponent(note)}`
       QRCode.toDataURL(upiUrl, { width: 180, margin: 1 })
         .then(setUpiQrUrl)
         .catch(() => setUpiQrUrl(null))
     }
-  }, [activeTab, targetPaise, order?.number])
+  }, [activeTab, targetPaise, order?.number, invoice?.number])
 
-  if (!order || outstanding <= 0 || order.status === 'CANCELLED') return null
+  if ((!order && !invoice) || outstanding <= 0 || (order && order.status === 'CANCELLED')) return null
 
   const copyVal = (text: string, key: string) => {
     void navigator.clipboard.writeText(text)
@@ -1617,9 +1690,17 @@ function PayOnlineCard({ token, order, reload }: {
     try {
       await api('/public/portal/pay/verify', {
         method: 'POST',
-        json: { token, orderId: order.id, razorpay_order_id: resp.razorpay_order_id, razorpay_payment_id: resp.razorpay_payment_id, razorpay_signature: resp.razorpay_signature },
+        json: {
+          token,
+          orderId: order?.id,
+          invoiceId: invoice?.id,
+          razorpay_order_id: resp.razorpay_order_id,
+          razorpay_payment_id: resp.razorpay_payment_id,
+          razorpay_signature: resp.razorpay_signature,
+        },
       })
       toast.success('Payment successful — receipt updated')
+      if (onClose) onClose()
       void reload()
     } catch (e: any) {
       toast.error(e?.message ?? 'Payment received but could not be confirmed.')
@@ -1636,7 +1717,7 @@ function PayOnlineCard({ token, order, reload }: {
     try {
       const r = await api<{ razorpayOrderId: string; amountInPaise: number; currency: string; keyId: string; isSimulated?: boolean }>(
         '/public/portal/pay',
-        { method: 'POST', json: { token, orderId: order.id, amountInPaise: targetPaise } }
+        { method: 'POST', json: { token, orderId: order?.id, invoiceId: invoice?.id, amountInPaise: targetPaise } }
       )
       if (r.isSimulated) {
         setSimulatedModal({ razorpayOrderId: r.razorpayOrderId, amountInPaise: r.amountInPaise })
@@ -1652,7 +1733,7 @@ function PayOnlineCard({ token, order, reload }: {
         currency: r.currency,
         order_id: r.razorpayOrderId,
         name: 'SunPower Solar',
-        description: `Order ${order.number}`,
+        description: entityTitle,
         theme: { color: '#f59e0b' },
         handler: (resp) => void confirmPayment(resp),
       })
@@ -1681,7 +1762,8 @@ function PayOnlineCard({ token, order, reload }: {
         method: 'POST',
         json: {
           token,
-          orderId: order.id,
+          orderId: order?.id,
+          invoiceId: invoice?.id,
           method,
           amountInPaise: targetPaise,
           reference: reference?.trim(),
@@ -1695,6 +1777,7 @@ function PayOnlineCard({ token, order, reload }: {
         UPI: 'UPI payment',
       }
       toast.success(`${methodLabels[method]} of ${money(targetPaise)} recorded successfully!`)
+      if (onClose) onClose()
       void reload()
     } catch (e: any) {
       toast.error(e?.message ?? 'Failed to record payment.')
@@ -1710,51 +1793,67 @@ function PayOnlineCard({ token, order, reload }: {
         <div className="bg-gradient-to-r from-blue-900 via-blue-800 to-indigo-900 text-white p-4">
           <div className="flex items-center justify-between gap-3 flex-wrap">
             <div>
-              <div className="text-xs uppercase tracking-wider text-blue-200 font-semibold">Payment Options</div>
+              <div className="text-xs uppercase tracking-wider text-blue-200 font-semibold">
+                {isInvoice ? 'Service Invoice Payment' : 'Payment Options'}
+              </div>
               <div className="text-lg font-bold text-white flex items-center gap-2">
-                Order {order.number}
+                {entityTitle}
                 <span className="text-xs font-normal bg-white/15 px-2.5 py-0.5 rounded-full border border-white/20">
-                  {order.status}
+                  {entityBadge}
                 </span>
               </div>
             </div>
-            <div className="text-right">
-              <div className="text-xs text-blue-200">Balance Outstanding</div>
-              <div className="text-xl font-bold text-amber-300">{money(outstanding)}</div>
+            <div className="flex items-center gap-3">
+              <div className="text-right">
+                <div className="text-xs text-blue-200">{isInvoice ? 'Invoice Amount' : 'Balance Outstanding'}</div>
+                <div className="text-xl font-bold text-amber-300">{money(outstanding)}</div>
+              </div>
+              {onClose && (
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="rounded-lg p-1.5 text-blue-200 hover:text-white hover:bg-white/10 transition ml-1"
+                  aria-label="Close"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              )}
             </div>
           </div>
 
-          {/* Amount selector (Full vs Custom) */}
-          <div className="mt-3 pt-3 border-t border-white/10 flex items-center justify-between gap-3 flex-wrap text-xs">
-            <span className="text-blue-100 font-medium">Paying amount:</span>
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => setAmountType('FULL')}
-                className={cn(
-                  'px-3 py-1 rounded-md font-medium transition',
-                  amountType === 'FULL' ? 'bg-amber-400 text-blue-950 font-semibold shadow-sm' : 'bg-white/10 text-white hover:bg-white/20'
-                )}
-              >
-                Full Balance ({money(outstanding)})
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setAmountType('CUSTOM')
-                  if (!customRupees) setCustomRupees(String(Math.round(outstanding / 200) || 50000))
-                }}
-                className={cn(
-                  'px-3 py-1 rounded-md font-medium transition',
-                  amountType === 'CUSTOM' ? 'bg-amber-400 text-blue-950 font-semibold shadow-sm' : 'bg-white/10 text-white hover:bg-white/20'
-                )}
-              >
-                Partial / Advance Amount
-              </button>
+          {/* Amount selector (Full vs Custom) - show for orders only */}
+          {!isInvoice && (
+            <div className="mt-3 pt-3 border-t border-white/10 flex items-center justify-between gap-3 flex-wrap text-xs">
+              <span className="text-blue-100 font-medium">Paying amount:</span>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setAmountType('FULL')}
+                  className={cn(
+                    'px-3 py-1 rounded-md font-medium transition',
+                    amountType === 'FULL' ? 'bg-amber-400 text-blue-950 font-semibold shadow-sm' : 'bg-white/10 text-white hover:bg-white/20'
+                  )}
+                >
+                  Full Balance ({money(outstanding)})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAmountType('CUSTOM')
+                    if (!customRupees) setCustomRupees(String(Math.round(outstanding / 200) || 50000))
+                  }}
+                  className={cn(
+                    'px-3 py-1 rounded-md font-medium transition',
+                    amountType === 'CUSTOM' ? 'bg-amber-400 text-blue-950 font-semibold shadow-sm' : 'bg-white/10 text-white hover:bg-white/20'
+                  )}
+                >
+                  Partial / Advance Amount
+                </button>
+              </div>
             </div>
-          </div>
+          )}
 
-          {amountType === 'CUSTOM' && (
+          {!isInvoice && amountType === 'CUSTOM' && (
             <div className="mt-2 flex items-center gap-2 bg-white/10 rounded-lg p-2 max-w-sm">
               <span className="text-white font-medium pl-1">₹</span>
               <Input
@@ -2061,10 +2160,10 @@ function PayOnlineCard({ token, order, reload }: {
             <DialogHeader>
               <DialogTitle className="flex items-center gap-2">
                 <CreditCard className="h-5 w-5 text-amber-600" />
-                Pay Online — Order {order.number}
+                Pay Online — {entityTitle}
               </DialogTitle>
               <DialogDescription>
-                Razorpay Test Simulation: Complete payment for your solar rooftop system.
+                Razorpay Test Simulation: Complete payment for your {isInvoice ? 'service invoice' : 'solar rooftop system'}.
               </DialogDescription>
             </DialogHeader>
 

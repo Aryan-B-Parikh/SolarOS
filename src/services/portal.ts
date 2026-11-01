@@ -130,7 +130,23 @@ export async function portalBundle(token: string) {
     })),
     invoices: customer.invoices.map((i) => ({ id: i.id, number: i.invoiceNumber, type: i.type, issueDate: i.issueDate, totalPaise: i.totalPaise, status: i.status })),
     payments: verified
-      ? customer.orders.flatMap((o) => o.payments.filter((p) => p.status === 'RECEIVED').map((p) => ({ amountPaise: p.amountPaise, method: p.method, receivedOn: p.receivedOn, kind: p.kind })))
+      ? (await db.payment.findMany({
+          where: {
+            OR: [
+              { customerId: customer.id },
+              { order: { customerId: customer.id } },
+              { invoice: { customerId: customer.id } },
+            ],
+            status: 'RECEIVED',
+          },
+          orderBy: { createdAt: 'desc' },
+        })).map((p) => ({
+          amountPaise: p.amountPaise,
+          method: p.method,
+          receivedOn: p.receivedOn,
+          kind: p.kind,
+          reference: p.reference,
+        }))
       : null,
   }
 }

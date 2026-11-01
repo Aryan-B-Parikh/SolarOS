@@ -8,12 +8,13 @@ import { portalPay } from '@/services/portal-payments'
 // endpoint does); the amount defaults to the order's outstanding balance.
 const paySchema = z.object({
   token: z.string().min(10).max(200),
-  orderId: z.string().min(6).max(64),
+  orderId: z.string().min(1).max(64).optional(),
+  invoiceId: z.string().min(1).max(64).optional(),
   amountInPaise: z.number().int().positive().max(1_000_000_000).optional(),
-})
+}).refine((d) => d.orderId || d.invoiceId, { message: 'Either orderId or invoiceId is required.' })
 
 export async function POST(req: NextRequest) {
   return handlerWithSchema(req, paySchema, async ({ body }) => {
-    return await portalPay(body.token, body.orderId, body.amountInPaise)
+    return await portalPay(body.token, { orderId: body.orderId, invoiceId: body.invoiceId }, body.amountInPaise)
   })
 }

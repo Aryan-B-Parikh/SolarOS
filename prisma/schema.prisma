@@ -104,6 +104,7 @@ model Customer {
   tickets        ServiceTicket[]
   accessLinks    CustomerAccessLink[]
   invoices       Invoice[]
+  payments       Payment[]
 }
 
 model CustomerAccessLink {
@@ -400,12 +401,15 @@ model OrderLine {
 
 model Payment {
   id             String    @id @default(uuid())
-  orderId        String
-  order          Order     @relation(fields: [orderId], references: [id])
+  orderId        String?
+  order          Order?    @relation(fields: [orderId], references: [id])
   invoiceId      String?
+  invoice        Invoice?  @relation(fields: [invoiceId], references: [id])
+  customerId     String?
+  customer       Customer? @relation(fields: [customerId], references: [id])
   amountPaise    Int
   method         String // UPI, NEFT, CASH, CHEQUE, LOAN
-  kind           String    @default("ADVANCE") // ADVANCE, PART, FINAL
+  kind           String    @default("ADVANCE") // ADVANCE, PART, FINAL, SERVICE
   reference      String?
   receivedOn     String // YYYY-MM-DD
   status         String    @default("RECEIVED") // RECEIVED, REVERSED
@@ -433,6 +437,7 @@ model Invoice {
   totalPaise    Int       @default(0)
   status        String    @default("ISSUED") // ISSUED, PAID, VOID
   lines         InvoiceLine[]
+  payments      Payment[]
 }
 
 model InvoiceLine {

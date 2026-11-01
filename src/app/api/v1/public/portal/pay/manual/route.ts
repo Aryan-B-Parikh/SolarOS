@@ -5,12 +5,13 @@ import { portalRecordManualPayment } from '@/services/portal-payments'
 
 const schema = z.object({
   token: z.string().min(10),
-  orderId: z.string().min(1),
+  orderId: z.string().min(1).optional(),
+  invoiceId: z.string().min(1).optional(),
   method: z.enum(['CASH', 'NEFT', 'CHEQUE', 'UPI']),
   amountInPaise: z.number().int().positive().optional(),
   reference: z.string().max(200).optional(),
   notes: z.string().max(500).optional(),
-})
+}).refine((d) => d.orderId || d.invoiceId, { message: 'Either orderId or invoiceId is required.' })
 
 export async function POST(req: NextRequest) {
   try {
@@ -19,6 +20,7 @@ export async function POST(req: NextRequest) {
     const result = await portalRecordManualPayment({
       token: parsed.token,
       orderId: parsed.orderId,
+      invoiceId: parsed.invoiceId,
       method: parsed.method,
       amountInPaise: parsed.amountInPaise,
       reference: parsed.reference,
