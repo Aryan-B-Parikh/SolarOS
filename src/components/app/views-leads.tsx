@@ -95,7 +95,7 @@ export function LeadBoardView() {
 
 function ManualEnquiryButton({ onDone }: { onDone: () => void }) {
   const [open, setOpen] = useState(false)
-  const [form, setForm] = useState({ name: '', phone: '', addressLine: '', city: 'Ahmedabad', pincode: '', source: 'WHATSAPP', monthlyBillRupees: 2500, requestedCapacityKw: 3, consent: true })
+  const [form, setForm] = useState({ name: '', phone: '', addressLine: '', city: '', pincode: '', source: 'WHATSAPP', monthlyBillRupees: 2500, requestedCapacityKw: 3, consent: true })
   const { busy, mutate } = useMutation()
   const set = (k: string, v: unknown) => setForm((f) => ({ ...f, [k]: v }))
 

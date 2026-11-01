@@ -16,7 +16,8 @@ import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
 import { Alert, EmptyState, Field, Loading, PageHeader, StageChip } from './shared'
-import { Package, Printer, QrCode, AlertTriangle, Plus, ScanLine, ShoppingCart, Undo2 } from 'lucide-react'
+import { Package, Printer, QrCode, AlertTriangle, Plus, ScanLine, ShoppingCart, Undo2, Download, ExternalLink } from 'lucide-react'
+import QRCode from 'qrcode'
 
 // Draft-PO prefill handed from the stock view's low-stock action to Purchasing
 // (module scope: survives the hash-route view switch; FR-5.8)
@@ -320,9 +321,35 @@ export function UnitsView() {
   const [status, setStatus] = useState('')
   const { data, loading } = useData(() => api(`/inventory/units${status ? `?status=${status}` : ''}${q ? `${status ? '&' : '?'}q=${encodeURIComponent(q)}` : ''}`), [q, status])
   const units = data?.units ?? []
+  const [selectedUnit, setSelectedUnit] = useState<any | null>(null)
+  const [qrImg, setQrImg] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!selectedUnit) {
+      setQrImg(null)
+      return
+    }
+    const origin = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000'
+    const targetUrl = `${origin}/#/w/${selectedUnit.qrCode}`
+    QRCode.toDataURL(targetUrl, { width: 300, margin: 2 })
+      .then((url) => setQrImg(url))
+      .catch((err) => console.error('Failed to generate QR code', err))
+  }, [selectedUnit])
+
+  const downloadQr = () => {
+    if (!qrImg || !selectedUnit) return
+    const a = document.createElement('a')
+    a.href = qrImg
+    a.download = `QR-${selectedUnit.serialNumber}-${selectedUnit.qrCode}.png`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    toast.success(`Downloaded QR code for ${selectedUnit.serialNumber}`)
+  }
+
   return (
     <div className="space-y-4">
-      <PageHeader title="Units" sub="One row per serialized unit; the QR opens the public warranty page" />
+      <PageHeader title="Units" sub="One row per serialized unit; view, download or scan QR codes for warranty check" />
       <div className="flex gap-2 flex-wrap">
         <Input placeholder="Search serial or QR code…" value={q} onChange={(e) => setQ(e.target.value)} className="max-w-xs" />
         {['', 'IN_STOCK', 'PICKED', 'DISPATCHED', 'DELIVERED', 'INSTALLED', 'RMA', 'REPLACED'].map((s) => (
@@ -336,26 +363,88 @@ export function UnitsView() {
           <table className="w-full text-sm min-w-[640px]">
             <thead><tr className="border-b text-left text-xs text-slate-400">
               <th className="px-4 py-2.5 font-medium">Serial</th><th className="px-3 py-2.5 font-medium">Product</th><th className="px-3 py-2.5 font-medium">Status</th>
-              <th className="px-3 py-2.5 font-medium">Customer</th><th className="px-3 py-2.5 font-medium">Delivered</th><th className="px-4 py-2.5 font-medium text-right">Warranty page</th>
+              <th className="px-3 py-2.5 font-medium">Customer</th><th className="px-3 py-2.5 font-medium">Delivered</th><th className="px-4 py-2.5 font-medium text-right">QR Code &amp; Warranty</th>
             </tr></thead>
             <tbody>
               {units.slice(0, 100).map((u: any) => (
                 <tr key={u.id} className="border-b last:border-0 hover:bg-slate-50/50">
-                  <td className="px-4 py-2.5 font-mono text-xs">{u.serialNumber}</td>
+                  <td className="px-4 py-2.5 font-mono text-xs font-medium text-slate-900">{u.serialNumber}</td>
                   <td className="px-3 py-2.5">{u.product.name}</td>
                   <td className="px-3 py-2.5"><StageChip status={u.status} /></td>
                   <td className="px-3 py-2.5">{u.customer?.name ?? '—'}</td>
                   <td className="px-3 py-2.5 text-slate-500">{u.deliveredOn ? fmtDate(u.deliveredOn) : '—'}</td>
                   <td className="px-4 py-2.5 text-right">
-                    <Button size="sm" variant="ghost" onClick={() => (window.location.hash = `/w/${u.qrCode}`)}>
-                      <QrCode className="h-3.5 w-3.5 mr-1" /> /w/{u.qrCode}
-                    </Button>
+                    <div className="flex items-center justify-end gap-1.5">
+                      <Button size="sm" variant="outline" className="h-8 text-xs gap-1 border-blue-200 text-blue-700 hover:bg-blue-50" onClick={() => setSelectedUnit(u)}>
+                        <QrCode className="h-3.5 w-3.5" /> View QR Label
+                      </Button>
+                      <Button size="sm" variant="ghost" className="h-8 text-xs text-slate-500" onClick={() => (window.location.hash = `/w/${u.qrCode}`)}>
+                        <ExternalLink className="h-3.5 w-3.5 mr-1" /> /w/{u.qrCode}
+                      </Button>
+                    </div>
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
         </CardContent></Card>
+      )}
+
+      {/* QR Label Modal */}
+      {selectedUnit && (
+        <Dialog open={!!selectedUnit} onOpenChange={(open) => { if (!open) setSelectedUnit(null) }}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <QrCode className="h-5 w-5 text-blue-600" />
+                Equipment QR Label
+              </DialogTitle>
+              <DialogDescription>
+                Printable QR sticker and scannable code for serialized equipment.
+              </DialogDescription>
+            </DialogHeader>
+
+            <div className="p-4 rounded-xl border border-slate-200 bg-white flex flex-col items-center text-center space-y-3 shadow-inner">
+              {qrImg ? (
+                <img
+                  src={qrImg}
+                  alt={`QR code for ${selectedUnit.serialNumber}`}
+                  className="w-56 h-56 object-contain border border-slate-100 rounded-lg p-2 bg-white shadow-sm"
+                />
+              ) : (
+                <div className="w-56 h-56 grid place-items-center bg-slate-100 rounded-lg text-xs text-slate-400">
+                  Generating QR...
+                </div>
+              )}
+
+              <div className="space-y-1 w-full">
+                <div className="text-xs font-semibold uppercase tracking-wider text-slate-400">{selectedUnit.product.brand ?? 'SunPower'}</div>
+                <div className="text-sm font-semibold text-slate-900">{selectedUnit.product.name}</div>
+                <div className="flex items-center justify-center gap-2 font-mono text-xs bg-slate-50 border rounded-md py-1 px-2 text-slate-700">
+                  <span>SN: <strong>{selectedUnit.serialNumber}</strong></span>
+                  <span>·</span>
+                  <span>QR: <strong>{selectedUnit.qrCode}</strong></span>
+                </div>
+                <div className="text-[11px] text-slate-400 truncate pt-1">
+                  URL: {typeof window !== 'undefined' ? `${window.location.origin}/#/w/${selectedUnit.qrCode}` : `/w/${selectedUnit.qrCode}`}
+                </div>
+              </div>
+            </div>
+
+            <DialogFooter className="flex-col sm:flex-row gap-2">
+              <Button variant="outline" className="flex-1 gap-1.5" onClick={downloadQr}>
+                <Download className="h-4 w-4" /> Download QR PNG
+              </Button>
+              <Button className="flex-1 gap-1.5 bg-blue-600 hover:bg-blue-700 text-white" onClick={() => {
+                const code = selectedUnit.qrCode
+                setSelectedUnit(null)
+                window.location.hash = `/w/${code}`
+              }}>
+                <ExternalLink className="h-4 w-4" /> Open Warranty Page
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       )}
     </div>
   )

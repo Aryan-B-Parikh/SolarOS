@@ -12,17 +12,19 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { Progress } from '@/components/ui/progress'
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
 import { Alert, Alert as AlertBox, EmptyState, Loading, WarrantyBar, PhotoThumb, Field } from './shared'
 import { PrintOverlay, QuoteDoc, InvoiceDoc, WarrantyDoc } from './docs'
 import { QrScannerModal } from './qr-scanner'
 import { Skeleton } from '@/components/ui/skeleton'
-import { CheckCircle2, ChevronLeft, ChevronRight, Circle, Sun, ShieldCheck, Wrench, Printer, Camera, FileText, Wallet, Clock, ArrowRight, Lock, RefreshCw, Phone, ArrowLeft, CreditCard, Loader2 } from 'lucide-react'
+import { CheckCircle2, ChevronLeft, ChevronRight, Circle, Sun, ShieldCheck, Wrench, Printer, Camera, FileText, Wallet, Clock, ArrowRight, Lock, RefreshCw, Phone, ArrowLeft, CreditCard, Loader2, Download, ExternalLink, QrCode } from 'lucide-react'
+import QRCode from 'qrcode'
 
 // ── S1: enquiry form (public) ─────────────────────────────────────
 
-const ENQUIRY_STEP1_FIELDS = ['name', 'phone', 'addressLine', 'city', 'pincode']
+const ENQUIRY_STEP1_FIELDS = ['name', 'phone', 'email', 'addressLine', 'city', 'pincode']
 
 /** What /api/v1/ai/bill-scan returns for a readable bill. */
 interface BillScanResult {
@@ -39,11 +41,11 @@ interface BillScanResult {
 export function EnquiryView() {
   const [step, setStep] = useState(0)
   const [form, setForm] = useState<{
-    name: string; phone: string; addressLine: string; city: string; pincode: string
+    name: string; phone: string; email: string; addressLine: string; city: string; pincode: string
     requestedCapacityKw: number | null; systemTypePref: string; wantsSubsidy: boolean
     monthlyBillRupees: number; consent: boolean; honeypot: string
   }>({
-    name: '', phone: '', addressLine: '', city: '', pincode: '',
+    name: '', phone: '', email: '', addressLine: '', city: '', pincode: '',
     requestedCapacityKw: 3, systemTypePref: 'ON_GRID', wantsSubsidy: true, monthlyBillRupees: 3000,
     consent: false, honeypot: '',
   })
@@ -62,6 +64,9 @@ export function EnquiryView() {
     if (s === 0) {
       if (form.name.trim().length < 2) e.name = 'Please enter your full name.'
       if (form.phone.replace(/\D/g, '').length < 10) e.phone = 'Enter a 10-digit mobile number.'
+      if (form.email.trim().length > 0 && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())) {
+        e.email = 'Please enter a valid email address.'
+      }
       if (form.addressLine.trim().length < 5) e.addressLine = 'Please enter the installation address.'
       if (form.city.trim().length < 2) e.city = 'Please enter your city or town.'
       if (!/^\d{6}$/.test(form.pincode)) e.pincode = 'Pincode must be exactly 6 digits.'
@@ -171,7 +176,7 @@ export function EnquiryView() {
         <CardContent className="p-5 space-y-4">
           {step === 0 ? (
             <>
-              <div className="grid sm:grid-cols-2 gap-4">
+              <div className="grid sm:grid-cols-3 gap-4">
                 <div className="space-y-1.5">
                   <Label htmlFor="name">Full name</Label>
                   <Input id="name" value={form.name} onChange={(e) => set('name', e.target.value)} placeholder="Aarav Patel" className={bad('name')} aria-invalid={!!errors.name} />
@@ -181,6 +186,11 @@ export function EnquiryView() {
                   <Label htmlFor="phone">Mobile number</Label>
                   <Input id="phone" value={form.phone} onChange={(e) => set('phone', e.target.value)} placeholder="98XXXXXXXX" inputMode="tel" className={bad('phone')} aria-invalid={!!errors.phone} />
                   {errText('phone')}
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="email">Email address</Label>
+                  <Input id="email" type="email" value={form.email} onChange={(e) => set('email', e.target.value)} placeholder="aarav@example.com" inputMode="email" className={bad('email')} aria-invalid={!!errors.email} />
+                  {errText('email')}
                 </div>
               </div>
               <div className="space-y-1.5">
@@ -458,6 +468,24 @@ function WarrantyLookupCard() {
   const [result, setResult] = useState<any>(null)
   const [err, setErr] = useState<string | null>(null)
   const [scannerOpen, setScannerOpen] = useState(false)
+  const [sampleQrOpen, setSampleQrOpen] = useState(false)
+  const [sampleQrs, setSampleQrs] = useState<{ serial: string; qrCode: string; name: string; dataUrl: string }[]>([])
+
+  useEffect(() => {
+    if (!sampleQrOpen) return
+    const samples = [
+      { serial: 'PNL540-26A-000500', qrCode: 'SP3D6ABD15', name: 'Solar Panel 540 Wp mono PERC' },
+      { serial: 'INV3K-26A-000312', qrCode: 'SP03D71A57', name: 'On-grid Inverter 3 kW' },
+      { serial: 'INV5K-26A-000308', qrCode: 'SP0D117A82', name: 'On-grid Inverter 5 kW' },
+    ]
+    const origin = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000'
+    Promise.all(
+      samples.map(async (s) => ({
+        ...s,
+        dataUrl: await QRCode.toDataURL(`${origin}/#/w/${s.qrCode}`, { width: 220, margin: 2 }),
+      }))
+    ).then(setSampleQrs).catch(console.error)
+  }, [sampleQrOpen])
 
   const lookup = async (overrideSerial?: string) => {
     const s = (overrideSerial ?? serial).trim()
@@ -504,6 +532,31 @@ function WarrantyLookupCard() {
           <Button disabled={busy || !serial.trim()} onClick={() => lookup()}>{busy ? 'Checking…' : 'Check'}</Button>
         </div>
 
+        {/* Quick Sample Serials & View Sample QRs */}
+        <div className="flex items-center gap-1.5 flex-wrap pt-1 text-xs text-slate-500">
+          <span>Quick test:</span>
+          {['PNL540-26A-000500', 'INV3K-26A-000312', 'INV5K-26A-000308'].map((s) => (
+            <button
+              key={s}
+              type="button"
+              onClick={() => { setSerial(s); void lookup(s) }}
+              className="px-2 py-0.5 rounded bg-slate-100 hover:bg-blue-50 hover:text-blue-700 font-mono text-[11px] border border-slate-200 transition"
+              title={`Click to test serial ${s}`}
+            >
+              {s}
+            </button>
+          ))}
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-6 px-1.5 text-xs text-blue-700 hover:text-blue-900 underline font-normal"
+            onClick={() => setSampleQrOpen(true)}
+          >
+            <QrCode className="h-3 w-3 mr-1 inline" /> View Sample QRs to Scan
+          </Button>
+        </div>
+
         {/* QR Scanner Dialog with Camera and File Upload */}
         <QrScannerModal
           open={scannerOpen}
@@ -512,6 +565,71 @@ function WarrantyLookupCard() {
           title="Scan Warranty QR Code"
           description="Point your camera at the QR code on the solar panel, inverter or certificate, or upload a photo."
         />
+
+        {/* Sample QR Codes Dialog */}
+        <Dialog open={sampleQrOpen} onOpenChange={setSampleQrOpen}>
+          <DialogContent className="max-w-xl">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <QrCode className="h-5 w-5 text-blue-600" />
+                Sample Equipment QR Codes
+              </DialogTitle>
+              <DialogDescription>
+                Point your camera at any of these QR codes to test live scanning, or download them to test the image upload scanner.
+              </DialogDescription>
+            </DialogHeader>
+
+            <div className="grid sm:grid-cols-3 gap-3 py-2">
+              {sampleQrs.map((item) => (
+                <div key={item.serial} className="rounded-xl border border-slate-200 bg-white p-3 flex flex-col items-center text-center space-y-2 shadow-sm">
+                  {item.dataUrl ? (
+                    <img src={item.dataUrl} alt={`QR for ${item.serial}`} className="w-32 h-32 object-contain border rounded p-1 bg-white" />
+                  ) : (
+                    <div className="w-32 h-32 grid place-items-center bg-slate-50 text-xs text-slate-400">Loading...</div>
+                  )}
+                  <div className="space-y-0.5 w-full">
+                    <div className="text-[11px] font-semibold text-slate-800 line-clamp-1">{item.name}</div>
+                    <div className="font-mono text-[10px] text-slate-500 truncate">SN: {item.serial}</div>
+                    <div className="font-mono text-[10px] text-blue-600">QR: {item.qrCode}</div>
+                  </div>
+                  <div className="flex flex-col gap-1 w-full pt-1">
+                    <Button
+                      size="sm"
+                      className="h-7 text-xs w-full bg-blue-600 hover:bg-blue-700 text-white"
+                      onClick={() => {
+                        setSampleQrOpen(false)
+                        setSerial(item.serial)
+                        void lookup(item.serial)
+                      }}
+                    >
+                      Check This Unit
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-7 text-xs w-full gap-1"
+                      onClick={() => {
+                        const a = document.createElement('a')
+                        a.href = item.dataUrl
+                        a.download = `QR-${item.serial}.png`
+                        document.body.appendChild(a)
+                        a.click()
+                        document.body.removeChild(a)
+                        toast.success(`Downloaded QR image for ${item.serial}`)
+                      }}
+                    >
+                      <Download className="h-3 w-3" /> Save PNG
+                    </Button>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setSampleQrOpen(false)}>Close</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
         {err && <div className="text-sm text-amber-900 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2" role="alert">{err}</div>}
         {result && (
@@ -603,10 +721,11 @@ export function QuoteView({ token }: { token: string }) {
     }
   }
 
-  const accept = async () => {
+  const accept = async (overrideName?: string) => {
+    const finalName = (overrideName ?? name).trim() || q.customerName || 'Customer'
     setBusy(true)
     try {
-      const r = await api(`/public/quotes/${token}/accept`, { method: 'POST', json: { acceptedName: name } })
+      const r = await api(`/public/quotes/${token}/accept`, { method: 'POST', json: { acceptedName: finalName } })
       setOutcome(`accepted:${r.orderNumber}`)
     } catch (e: any) { toast.error(e.message) } finally { setBusy(false) }
   }
@@ -653,6 +772,82 @@ export function QuoteView({ token }: { token: string }) {
         </Card>
       )}
 
+      {canDecide && (
+        <Card className="border-blue-200 bg-gradient-to-r from-blue-50/60 via-white to-slate-50/50 shadow-sm">
+          <CardContent className="p-5 space-y-4">
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <div>
+                <div className="text-base font-semibold text-slate-900 flex items-center gap-2">
+                  <CheckCircle2 className="h-5 w-5 text-blue-600" />
+                  Accept or Reject this Quotation
+                </div>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Confirm your acceptance below to create your order and begin equipment preparation.
+                </p>
+              </div>
+              <span className="text-xs font-semibold px-3 py-1 rounded-full bg-blue-100 text-blue-800">
+                Action needed
+              </span>
+            </div>
+
+            <div className="grid sm:grid-cols-2 gap-4 pt-1">
+              {/* Accept Box */}
+              <div className="rounded-xl border border-green-200 bg-white p-4 space-y-2.5 shadow-sm">
+                <div className="text-sm font-semibold text-green-800 flex items-center gap-1.5">
+                  <CheckCircle2 className="h-4 w-4 text-green-600" /> Accept Quotation
+                </div>
+                <p className="text-xs text-slate-500">
+                  Type or confirm your full name to proceed with this offer.
+                </p>
+                <div className="flex gap-2">
+                  <Input
+                    placeholder="Your full name"
+                    value={name || q.customerName || ''}
+                    onChange={(e) => setName(e.target.value)}
+                  />
+                  <Button
+                    className="bg-green-600 hover:bg-green-700 text-white shrink-0 font-medium"
+                    disabled={busy || (!name && !q.customerName)}
+                    onClick={() => {
+                      const finalName = name.trim() || q.customerName || 'Customer'
+                      void accept(finalName)
+                    }}
+                  >
+                    {busy ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : null}
+                    Accept Quote
+                  </Button>
+                </div>
+              </div>
+
+              {/* Reject Box */}
+              <div className="rounded-xl border border-slate-200 bg-white p-4 space-y-2.5 shadow-sm">
+                <div className="text-sm font-semibold text-slate-700">
+                  Decline / Reject
+                </div>
+                <p className="text-xs text-slate-500">
+                  Let us know why so we can offer a revised system or discount.
+                </p>
+                <div className="flex gap-2">
+                  <Input
+                    placeholder="Reason (e.g. need changes, budget)"
+                    value={reason}
+                    onChange={(e) => setReason(e.target.value)}
+                  />
+                  <Button
+                    variant="outline"
+                    className="shrink-0 text-slate-600 hover:text-red-700 hover:border-red-300"
+                    disabled={reason.trim().length < 3 || busy}
+                    onClick={reject}
+                  >
+                    Send Rejection
+                  </Button>
+                </div>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       <Card>
         <CardHeader className="pb-2"><CardTitle className="text-base">Parts list (every part included)</CardTitle></CardHeader>
         <CardContent className="p-0">
@@ -685,43 +880,6 @@ export function QuoteView({ token }: { token: string }) {
           </div>
         </CardContent>
       </Card>
-
-      {canDecide && !verified && (
-        <Card>
-          <CardContent className="p-5 space-y-3">
-            <div className="flex items-center gap-2 text-sm font-medium"><Lock className="h-4 w-4 text-slate-500" /> Verify it is you</div>
-            <p className="text-sm text-slate-500">Enter the last 4 digits of the phone number this quote was sent to.</p>
-            <div className="flex gap-2">
-              <Input className="w-32 tracking-widest" inputMode="numeric" maxLength={4} value={last4} onChange={(e) => setLast4(e.target.value.replace(/\D/g, ''))} placeholder="••••" />
-              <Button onClick={doVerify} disabled={last4.length !== 4 || busy}>Verify</Button>
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {canDecide && verified && (
-        <Card className="border-blue-200">
-          <CardContent className="p-5 space-y-4">
-            <div className="text-sm font-medium">Accept or reject this quote</div>
-            <div className="grid gap-3">
-              <div className="rounded-lg border p-3 space-y-2">
-                <div className="text-sm font-medium">Accept</div>
-                <p className="text-xs text-slate-500">Type your full name to confirm. Your order will be created and our team will call you for the advance payment.</p>
-                <div className="flex gap-2">
-                  <Input placeholder="Your full name" value={name} onChange={(e) => setName(e.target.value)} />
-                  <Button disabled={name.trim().length < 2 || busy} onClick={accept}>Accept quote</Button>
-                </div>
-              </div>
-              <div className="rounded-lg border p-3 space-y-2">
-                <div className="text-sm font-medium">Reject with a reason</div>
-                <p className="text-xs text-slate-500">Telling us why helps us improve the offer. You are not charged anything.</p>
-                <Textarea placeholder="For example: too expensive, need smaller system, will decide next month…" value={reason} onChange={(e) => setReason(e.target.value)} rows={2} />
-                <Button variant="outline" disabled={reason.trim().length < 3 || busy} onClick={reject}>Send rejection</Button>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      )}
 
       {!canDecide && (
         <Alert tone={q.status === 'ACCEPTED' ? 'success' : q.status === 'REJECTED' ? 'warn' : 'neutral'} title={`This quote is ${q.status.toLowerCase()}`}>
@@ -993,7 +1151,49 @@ export function PortalView({ token }: { token: string }) {
               <div className="text-xs text-slate-400">{p.message}</div>
             </div>
           </div>
-          {nextAction && (
+          {p.quote && p.quote.status === 'SENT' ? (
+            <div className="rounded-xl border border-blue-200 bg-gradient-to-r from-blue-50/90 to-indigo-50/70 p-4 space-y-3">
+              <div className="flex items-start justify-between gap-3 flex-wrap">
+                <div>
+                  <div className="text-xs font-semibold uppercase tracking-wider text-blue-700">Action needed · Step 3 of 8</div>
+                  <div className="text-base font-semibold text-slate-900 mt-0.5">
+                    Your quotation {p.quote.quoteNumber} is ready ({p.quote.capacityKw} kW · {money(p.quote.totalPaise)})
+                  </div>
+                  <div className="text-xs text-slate-500 mt-0.5">
+                    Valid until {fmtDate(p.quote.validUntil)}. Accept now to proceed with your solar installation.
+                  </div>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 flex-wrap pt-1">
+                <Button
+                  className="bg-green-600 hover:bg-green-700 text-white font-medium"
+                  size="sm"
+                  disabled={busy}
+                  onClick={async () => {
+                    setBusy(true)
+                    try {
+                      await api(`/public/quotes/${token}/accept`, { method: 'POST', json: { acceptedName: p.customer.name } })
+                      toast.success('Quotation accepted! Your order is being created.')
+                      void reload()
+                    } catch (e: any) {
+                      toast.error(e.message)
+                    } finally {
+                      setBusy(false)
+                    }
+                  }}
+                >
+                  <CheckCircle2 className="h-4 w-4 mr-1.5" /> Accept Quotation
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => (window.location.hash = `/q/${token}`)}
+                >
+                  Review Full Breakdown <ArrowRight className="h-3.5 w-3.5 ml-1" />
+                </Button>
+              </div>
+            </div>
+          ) : nextAction ? (
             <div className="rounded-lg border border-blue-100 bg-blue-50/70 px-3 py-2.5 flex items-center justify-between gap-3 flex-wrap">
               <div className="text-sm text-blue-900 min-w-0">{nextAction.label}</div>
               {nextAction.to && (
@@ -1002,7 +1202,7 @@ export function PortalView({ token }: { token: string }) {
                 </Button>
               )}
             </div>
-          )}
+          ) : null}
           {(systemKw != null || total != null) && (
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-1">
               <Field label="System size">{systemKw != null ? `${num(systemKw)} kW` : '—'}</Field>
@@ -1493,6 +1693,7 @@ function RequestFreshLink() {
   const [email, setEmail] = useState('')
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState<string | null>(null)
+  const [directLink, setDirectLink] = useState<string | null>(null)
   const isValidEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
   return (
     <Card>
@@ -1504,20 +1705,31 @@ function RequestFreshLink() {
           <Input
             type="email"
             value={email}
-            onChange={(e) => setEmail(e.target.value)}
+            onChange={(e) => { setEmail(e.target.value); setMsg(null); setDirectLink(null) }}
             placeholder="Your registered email address"
             inputMode="email"
             aria-label="Registered email address"
           />
           <Button disabled={!isValidEmail || busy} onClick={async () => {
             setBusy(true)
+            setMsg(null)
+            setDirectLink(null)
             try {
               const r = await api('/public/portal-link-request', { method: 'POST', json: { email } })
               setMsg(r.message)
+              if (r.directLink) setDirectLink(r.directLink)
             } catch (e: any) { toast.error(e.message) } finally { setBusy(false) }
-          }}>Send</Button>
+          }}>{busy ? 'Sending…' : 'Send'}</Button>
         </div>
-        {msg && <div className="text-sm text-green-700">{msg}</div>}
+        {msg && <div className="text-sm text-green-700 font-medium pt-1">{msg}</div>}
+        {directLink && (
+          <div className="mt-2 pt-2 border-t border-slate-100 flex items-center justify-between flex-wrap gap-2">
+            <span className="text-xs text-slate-500">Demo link ready:</span>
+            <Button size="sm" variant="outline" className="text-xs text-blue-700 h-8" onClick={() => (window.location.hash = directLink)}>
+              Open My SunPower directly <ArrowRight className="h-3.5 w-3.5 ml-1" />
+            </Button>
+          </div>
+        )}
       </CardContent>
     </Card>
   )

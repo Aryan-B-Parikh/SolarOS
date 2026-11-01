@@ -39,6 +39,7 @@ export function addressSimilarity(a: string, b: string): number {
 export interface EnquiryInput {
   name: string
   phone: string
+  email?: string | null
   addressLine: string
   city: string
   pincode: string
@@ -59,6 +60,7 @@ export async function createLeadFromEnquiry(input: EnquiryInput, opts: { request
   if (!input.consent) throw new AppError('VALIDATION_FAILED', 'Consent is required to contact you.')
   const settings = await getSettings()
   const phone = normalizePhone(input.phone)
+  const email = input.email ? input.email.trim().toLowerCase() : null
 
   // duplicate detection (FR-1.4)
   let customer = await db.customer.findUnique({ where: { phone } })
@@ -70,12 +72,18 @@ export async function createLeadFromEnquiry(input: EnquiryInput, opts: { request
         customerNumber: cnum,
         name: input.name,
         phone,
+        email,
         addressLine: input.addressLine,
         addressNorm: normalizeAddress(`${input.addressLine} ${input.pincode}`),
         city: input.city,
         pincode: input.pincode,
         consentAt: new Date(),
       },
+    })
+  } else if (email && !customer.email) {
+    customer = await db.customer.update({
+      where: { id: customer.id },
+      data: { email },
     })
   }
 
@@ -143,12 +151,28 @@ export async function createLeadFromEnquiry(input: EnquiryInput, opts: { request
   // customer's phone — only a brand-new customer sees their link inline.
   const { issueLink } = await import('@/lib/access-links')
   const { token, reused } = await issueLink(customer.id, 'PORTAL', null, 90)
+  const { runOutbox } = await import('@/lib/outbox')
+
+  // Send email if customer has an email address
+  const recipientEmail = email ?? customer.email
+  if (recipientEmail) {
+    await enqueue({
+      channel: 'EMAIL',
+      recipient: recipientEmail,
+      template: reused ? 'PORTAL_LINK_RESENT' : 'PORTAL_LINK',
+      payload: { to: recipientEmail, name: customer.name, leadNumber, link: `/p/${token}` },
+    })
+  }
+
   await enqueue({
     channel: 'SMS',
     recipient: maskPhone(customer.phone),
     template: reused ? 'PORTAL_LINK_RESENT' : 'PORTAL_LINK',
     payload: { to: customer.phone, name: customer.name, leadNumber, link: `/p/${token}` },
   })
+
+  // Deliver queued messages immediately
+  void runOutbox()
 
   await audit({ actorType: input.actorId ? 'USER' : 'SYSTEM', actorId: input.actorId, entityType: 'lead', entityId: lead.id, action: 'create', after: { leadNumber, source: input.source } })
 

@@ -9,6 +9,7 @@ import { db } from '@/lib/db'
 const schema = z.object({
   name: z.string().min(2).max(120),
   phone: z.string().min(10).max(16),
+  email: z.string().email().optional().or(z.literal('')),
   addressLine: z.string().min(5).max(200),
   city: z.string().min(2).max(80),
   pincode: z.string().regex(/^\d{6}$/),
@@ -32,6 +33,7 @@ export async function POST(req: NextRequest) {
     const result = await createLeadFromEnquiry({
       name: body.name,
       phone: body.phone,
+      email: body.email || null,
       addressLine: body.addressLine,
       city: body.city,
       pincode: body.pincode,

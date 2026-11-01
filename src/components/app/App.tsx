@@ -364,7 +364,7 @@ export function PublicFrame({ children }: { children: React.ReactNode }) {
             <span className="grid h-8 w-8 place-items-center rounded-lg bg-blue-700 text-white"><Sun className="h-5 w-5" /></span>
             SunPower Solar Energy
           </a>
-          <span className="ml-auto text-xs text-slate-400">Ahmedabad · Gujarat</span>
+          <span className="ml-auto text-xs text-slate-500 font-medium">Solar EPC &amp; Rooftop Solutions</span>
         </div>
       </header>
       <main className="flex-1 max-w-3xl w-full mx-auto px-4 py-6">{children}</main>

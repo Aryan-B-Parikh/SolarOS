@@ -300,3 +300,4 @@ export function QrScannerModal({
     </Dialog>
   )
 }
+
