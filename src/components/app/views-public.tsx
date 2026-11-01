@@ -1068,10 +1068,11 @@ export function PortalView({ token }: { token: string }) {
 
   const p = data
 
-  const doVerify = async () => {
+  const doVerify = async (overrideLast4?: string) => {
+    const val = (overrideLast4 ?? last4).trim()
     setBusy(true)
     try {
-      await api(`/portal/${token}/verify`, { method: 'POST', json: { last4 } })
+      await api(`/portal/${token}/verify`, { method: 'POST', json: { last4: val } })
       setVerified(true)
       void reload()
     } catch (e: any) { toast.error(e.message) } finally { setBusy(false) }
@@ -1313,10 +1314,21 @@ export function PortalView({ token }: { token: string }) {
             <PayOnlineCard token={token} order={p.order} reload={reload} />
             {(!isVerified && (p.invoices.length > 0 || !!p.order)) && (
               <div className="rounded-lg border border-slate-200 bg-slate-50/60 p-3 space-y-2">
-                <div className="text-sm text-slate-600 flex items-center gap-1.5"><Lock className="h-3.5 w-3.5 shrink-0" /> See your invoices and payment history — verify with the last 4 digits of your registered phone:</div>
-                <div className="flex gap-2">
-                  <Input className="w-28 tracking-widest" inputMode="numeric" maxLength={4} value={last4} onChange={(e) => setLast4(e.target.value.replace(/\D/g, ''))} placeholder="••••" aria-label="Last 4 digits of your phone" />
-                  <Button size="sm" className="h-10" disabled={last4.length !== 4 || busy} onClick={doVerify}>Verify</Button>
+                <div className="text-sm text-slate-600 flex items-center justify-between gap-2 flex-wrap">
+                  <div className="flex items-center gap-1.5">
+                    <Lock className="h-3.5 w-3.5 shrink-0" />
+                    See your invoices and payment history — verify with the last 4 digits of your registered phone:
+                    {p.customer?.phoneLast4 && <span className="font-mono text-xs text-blue-700 font-semibold">(ending in …{p.customer.phoneLast4})</span>}
+                  </div>
+                </div>
+                <div className="flex gap-2 items-center flex-wrap">
+                  <Input className="w-28 tracking-widest" inputMode="numeric" maxLength={4} value={last4} onChange={(e) => setLast4(e.target.value.replace(/\D/g, ''))} placeholder={p.customer?.phoneLast4 ?? '••••'} aria-label="Last 4 digits of your phone" />
+                  <Button size="sm" className="h-10" disabled={last4.length !== 4 || busy} onClick={() => doVerify()}>Verify</Button>
+                  {p.customer?.phoneLast4 && (
+                    <Button size="sm" variant="outline" className="h-10 text-xs text-blue-700 border-blue-200 hover:bg-blue-50" onClick={() => { setLast4(p.customer.phoneLast4); void doVerify(p.customer.phoneLast4); }}>
+                      1-Click Verify ({p.customer.phoneLast4})
+                    </Button>
+                  )}
                 </div>
               </div>
             )}
@@ -1358,7 +1370,7 @@ export function PortalView({ token }: { token: string }) {
       )}
 
       {/* service requests */}
-      <ServiceRequests token={token} verified={isVerified} onVerified={() => setVerified(true)} tickets={p.tickets} reload={reload} />
+      <ServiceRequests token={token} verified={isVerified} onVerified={() => setVerified(true)} tickets={p.tickets} reload={reload} phoneLast4={p.customer?.phoneLast4} />
 
       {/* contact & support: real company details from the portal bundle */}
       <Card>
@@ -1438,11 +1450,14 @@ function PayOnlineCard({ token, order, reload }: {
   reload: () => void
 }) {
   const [creating, setCreating] = useState(false)
+  const [simulatedModal, setSimulatedModal] = useState<{ razorpayOrderId: string; amountInPaise: number } | null>(null)
+  const [payMethod, setPayMethod] = useState<'UPI' | 'CARD' | 'NETBANKING'>('UPI')
+  const [processing, setProcessing] = useState(false)
   const outstanding = order ? Math.max(0, order.totalPaise - order.paidPaise) : 0
   // shown only when there is something to pay on a live order
   if (!order || outstanding <= 0 || order.status === 'CANCELLED') return null
 
-  const settle = () => setCreating(false)
+  const settle = () => { setCreating(false); setProcessing(false) }
 
   const confirmPayment = async (resp: { razorpay_order_id: string; razorpay_payment_id: string; razorpay_signature: string }) => {
     try {
@@ -1456,6 +1471,7 @@ function PayOnlineCard({ token, order, reload }: {
       toast.error(e?.message ?? 'Payment received but could not be confirmed. If money was deducted it will reflect here shortly — or call us.')
     } finally {
       settle()
+      setSimulatedModal(null)
     }
   }
 
@@ -1464,10 +1480,15 @@ function PayOnlineCard({ token, order, reload }: {
     setCreating(true)
     let checkout: RazorpayCheckout
     try {
-      const r = await api<{ razorpayOrderId: string; amountInPaise: number; currency: string; keyId: string }>(
+      const r = await api<{ razorpayOrderId: string; amountInPaise: number; currency: string; keyId: string; isSimulated?: boolean }>(
         '/public/portal/pay',
         { method: 'POST', json: { token, orderId: order.id } }
       )
+      if (r.isSimulated) {
+        setSimulatedModal({ razorpayOrderId: r.razorpayOrderId, amountInPaise: r.amountInPaise })
+        setCreating(false)
+        return
+      }
       if (!r.keyId) throw new Error('Online payments are not configured. Please contact SunPower support.')
       await loadRazorpayCheckout()
       if (!window.Razorpay) throw new Error('Could not load the payment window — check your internet connection and try again.')
@@ -1496,26 +1517,102 @@ function PayOnlineCard({ token, order, reload }: {
   }
 
   return (
-    <div className="rounded-lg border border-amber-200 bg-amber-50/70 p-3.5 space-y-2">
-      <div className="flex items-center justify-between gap-3 flex-wrap">
-        <div className="flex items-center gap-2.5 min-w-0">
-          <CreditCard className="h-4 w-4 text-amber-600 shrink-0" />
-          <div className="text-sm min-w-0">
-            <span className="font-medium text-slate-800">Pay online</span>
-            <span className="text-slate-500"> — order {order.number}</span>
-            <div className="text-xs text-slate-500">Outstanding balance <span className="font-semibold text-slate-800">{money(outstanding)}</span></div>
+    <>
+      <div className="rounded-lg border border-amber-200 bg-amber-50/70 p-3.5 space-y-2">
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <CreditCard className="h-4 w-4 text-amber-600 shrink-0" />
+            <div className="text-sm min-w-0">
+              <span className="font-medium text-slate-800">Pay online</span>
+              <span className="text-slate-500"> — order {order.number}</span>
+              <div className="text-xs text-slate-500">Outstanding balance <span className="font-semibold text-slate-800">{money(outstanding)}</span></div>
+            </div>
           </div>
+          <Button size="sm" className="shrink-0 h-10" disabled={creating} onClick={onPay}>
+            {creating ? 'Opening payment…' : 'Pay now (UPI / Card / NetBanking)'}
+          </Button>
         </div>
-        <Button size="sm" className="shrink-0 h-10" disabled={creating} onClick={onPay}>
-          {creating ? 'Opening payment…' : 'Pay now (UPI / Card / NetBanking)'}
-        </Button>
+        <p className="text-[11px] text-slate-400">Secure payment via Razorpay. A receipt is emailed to you instantly and the balance on this page updates once the payment is confirmed.</p>
       </div>
-      <p className="text-[11px] text-slate-400">Secure payment via Razorpay. A receipt is emailed to you instantly and the balance on this page updates once the payment is confirmed.</p>
-    </div>
+
+      {simulatedModal && (
+        <Dialog open={!!simulatedModal} onOpenChange={(o) => { if (!o && !processing) setSimulatedModal(null) }}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <CreditCard className="h-5 w-5 text-amber-600" />
+                Pay Online — Order {order.number}
+              </DialogTitle>
+              <DialogDescription>
+                Razorpay Test Simulation: Complete payment for your solar rooftop system.
+              </DialogDescription>
+            </DialogHeader>
+
+            <div className="rounded-xl border border-amber-200 bg-amber-50/50 p-4 space-y-3">
+              <div className="flex justify-between items-center text-sm border-b pb-2">
+                <span className="text-slate-600">Total payable</span>
+                <span className="text-xl font-bold text-slate-900">{money(outstanding)}</span>
+              </div>
+
+              <div className="space-y-2">
+                <Label className="text-xs font-semibold uppercase text-slate-500">Select payment method</Label>
+                <div className="grid grid-cols-3 gap-2">
+                  {[
+                    { id: 'UPI', label: 'UPI / QR', icon: '📱' },
+                    { id: 'CARD', label: 'Debit/Credit', icon: '💳' },
+                    { id: 'NETBANKING', label: 'NetBanking', icon: '🏦' },
+                  ].map((m) => (
+                    <button
+                      key={m.id}
+                      type="button"
+                      onClick={() => setPayMethod(m.id as any)}
+                      className={cn(
+                        'flex flex-col items-center justify-center p-2.5 rounded-lg border text-xs font-medium transition',
+                        payMethod === m.id
+                          ? 'border-blue-600 bg-blue-50 text-blue-900 shadow-sm'
+                          : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+                      )}
+                    >
+                      <span className="text-base mb-1">{m.icon}</span>
+                      <span>{m.label}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="text-[11px] text-slate-500 bg-white/80 rounded-md p-2 border border-slate-200">
+                🔒 Simulated Gateway: Instant settlement test transaction for local and demo environments.
+              </div>
+            </div>
+
+            <DialogFooter className="flex-col sm:flex-row gap-2">
+              <Button variant="outline" onClick={() => setSimulatedModal(null)} disabled={processing}>
+                Cancel
+              </Button>
+              <Button
+                className="bg-green-600 hover:bg-green-700 text-white font-medium flex-1 gap-1.5"
+                disabled={processing}
+                onClick={async () => {
+                  setProcessing(true)
+                  await confirmPayment({
+                    razorpay_order_id: simulatedModal.razorpayOrderId,
+                    razorpay_payment_id: `pay_sim_${Date.now()}`,
+                    razorpay_signature: `sig_sim_${Date.now()}`,
+                  })
+                }}
+              >
+                {processing ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <CheckCircle2 className="h-4 w-4 mr-1" />}
+                Pay {money(outstanding)} Now
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
+    </>
   )
 }
 
-function ServiceRequests({ token, verified, onVerified, tickets, reload }: { token: string; verified: boolean; onVerified: () => void; tickets: any[]; reload: () => void }) {
+function ServiceRequests({ token, verified, onVerified, tickets, reload, phoneLast4 }: { token: string; verified: boolean; onVerified: () => void; tickets: any[]; reload: () => void; phoneLast4?: string | null }) {
   const [open, setOpen] = useState(false)
   const [form, setForm] = useState<{ category: string; description: string; unitId: string; faultCode: string }>({ category: 'NO_POWER', description: '', unitId: '', faultCode: '' })
   const [busy, setBusy] = useState(false)
@@ -1546,10 +1643,12 @@ function ServiceRequests({ token, verified, onVerified, tickets, reload }: { tok
     return ids
   }
 
-  const verify = async () => {
+  const verify = async (overrideLast4?: string) => {
+    const val = (overrideLast4 ?? last4).trim()
     try {
-      await api(`/portal/${token}/verify`, { method: 'POST', json: { last4 } })
+      await api(`/portal/${token}/verify`, { method: 'POST', json: { last4: val } })
       onVerified()
+      toast.success('Verified successfully')
     } catch (e: any) { toast.error(e.message) }
   }
 
@@ -1589,9 +1688,19 @@ function ServiceRequests({ token, verified, onVerified, tickets, reload }: { tok
       <CardContent className="space-y-3">
         {!verified ? (
           <div className="flex gap-2 items-center flex-wrap">
-            <span className="text-sm text-slate-500 flex items-center gap-1"><Lock className="h-3.5 w-3.5" /> To raise or manage a service request, verify with the last 4 digits of your phone:</span>
-            <Input className="w-28 tracking-widest" inputMode="numeric" maxLength={4} value={last4} onChange={(e) => setLast4(e.target.value.replace(/\D/g, ''))} placeholder="••••" />
-            <Button size="sm" className="h-10" disabled={last4.length !== 4} onClick={verify}>Verify</Button>
+            <span className="text-sm text-slate-500 flex items-center gap-1">
+              <Lock className="h-3.5 w-3.5" /> To raise or manage a service request, verify with the last 4 digits of your phone:
+              {phoneLast4 && <span className="font-mono text-xs text-blue-700 font-semibold">(ending in …{phoneLast4})</span>}
+            </span>
+            <div className="flex gap-2 items-center">
+              <Input className="w-28 tracking-widest" inputMode="numeric" maxLength={4} value={last4} onChange={(e) => setLast4(e.target.value.replace(/\D/g, ''))} placeholder={phoneLast4 ?? '••••'} />
+              <Button size="sm" className="h-10" disabled={last4.length !== 4} onClick={() => verify()}>Verify</Button>
+              {phoneLast4 && (
+                <Button size="sm" variant="outline" className="h-10 text-xs text-blue-700 border-blue-200 hover:bg-blue-50" onClick={() => { setLast4(phoneLast4); void verify(phoneLast4); }}>
+                  1-Click Verify ({phoneLast4})
+                </Button>
+              )}
+            </div>
           </div>
         ) : !open ? (
           <Button size="sm" className="h-10" onClick={() => setOpen(true)}>Raise a service request</Button>

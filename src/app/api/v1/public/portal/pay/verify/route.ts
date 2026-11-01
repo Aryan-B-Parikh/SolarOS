@@ -10,9 +10,9 @@ import { portalPayVerify } from '@/services/portal-payments'
 const verifySchema = z.object({
   token: z.string().min(10).max(200),
   orderId: z.string().min(6).max(64),
-  razorpay_order_id: z.string().regex(/^order_[A-Za-z0-9]{6,}$/),
-  razorpay_payment_id: z.string().regex(/^pay_[A-Za-z0-9]{6,}$/),
-  razorpay_signature: z.string().min(16).max(512),
+  razorpay_order_id: z.string().regex(/^order_[A-Za-z0-9_-]{6,}$/),
+  razorpay_payment_id: z.string().regex(/^pay_[A-Za-z0-9_-]{6,}$/),
+  razorpay_signature: z.string().min(10).max(512),
 })
 
 export async function POST(req: NextRequest) {

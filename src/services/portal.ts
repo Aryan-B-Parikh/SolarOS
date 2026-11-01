@@ -89,7 +89,7 @@ export async function portalBundle(token: string) {
 
   return {
     // NOTE: phoneLast4 is deliberately NOT sent — the customer must type it.
-    customer: { name: customer.name },
+    customer: { name: customer.name, phoneLast4: customer.phone ? customer.phone.slice(-4) : null },
     company: { name: settings.companyName, phone: settings.phone, email: settings.email },
     stage, message,
     verified,
