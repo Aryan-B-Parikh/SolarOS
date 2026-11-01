@@ -42,3 +42,4 @@ stats().catch(console.error).finally(async () => {
   await db.$disconnect()
   process.exit(0)
 })
+

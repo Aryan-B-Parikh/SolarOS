@@ -469,14 +469,27 @@ function WarrantyLookupCard() {
   const [err, setErr] = useState<string | null>(null)
   const [scannerOpen, setScannerOpen] = useState(false)
   const [sampleQrOpen, setSampleQrOpen] = useState(false)
-  const [sampleQrs, setSampleQrs] = useState<{ serial: string; qrCode: string; name: string; dataUrl: string }[]>([])
+  const [sampleCategory, setSampleCategory] = useState<'ALL' | 'PANEL' | 'INVERTER' | 'BATTERY' | 'OTHER'>('ALL')
+  const [sampleQrs, setSampleQrs] = useState<{ serial: string; qrCode: string; name: string; brand: string; category: string; warranty: string; dataUrl: string }[]>([])
 
   useEffect(() => {
     if (!sampleQrOpen) return
     const samples = [
-      { serial: 'PNL540-26A-000500', qrCode: 'SP3D6ABD15', name: 'Solar Panel 540 Wp mono PERC' },
-      { serial: 'INV3K-26A-000312', qrCode: 'SP03D71A57', name: 'On-grid Inverter 3 kW' },
-      { serial: 'INV5K-26A-000308', qrCode: 'SP0D117A82', name: 'On-grid Inverter 5 kW' },
+      { serial: 'PNL550-BIFI-26A-5001', qrCode: 'SP-BIFI-5001', name: 'Bifacial Solar Panel 550 Wp Glass-Glass', brand: 'Adani Solar', category: 'PANEL', warranty: '25 Years Warranty' },
+      { serial: 'PNL580-TOP-26A-5001', qrCode: 'SP-TOP-5001', name: 'TOPCon Solar Panel 580 Wp N-Type', brand: 'Waaree Energies', category: 'PANEL', warranty: '25 Years Warranty' },
+      { serial: 'PNL540-26A-5001', qrCode: 'SP-PNL540-5001', name: 'Solar Panel 540 Wp Mono PERC', brand: 'Adani Solar', category: 'PANEL', warranty: '20 Years Warranty' },
+      { serial: 'INV6K-HYB-26A-5001', qrCode: 'SP-HYB6K-5001', name: 'Hybrid Inverter 6 kW with Battery Backup', brand: 'Growatt', category: 'INVERTER', warranty: '5 Years Warranty' },
+      { serial: 'INV10K-3PH-26A-5001', qrCode: 'SP-INV10K-5001', name: 'Three-Phase On-Grid Inverter 10 kW', brand: 'Sungrow', category: 'INVERTER', warranty: '5 Years Warranty' },
+      { serial: 'INV15K-3PH-26A-5001', qrCode: 'SP-INV15K-5001', name: 'Commercial Inverter 15 kW', brand: 'Sungrow', category: 'INVERTER', warranty: '5 Years Warranty' },
+      { serial: 'INV3K-26A-5001', qrCode: 'SP-INV3K-5001', name: 'On-Grid Inverter 3 kW', brand: 'Luminous', category: 'INVERTER', warranty: '5 Years Warranty' },
+      { serial: 'MIC1200-26A-5001', qrCode: 'SP-MIC12-5001', name: 'Quad Microinverter 1200 W (4-in-1)', brand: 'Hoymiles', category: 'INVERTER', warranty: '10 Years Warranty' },
+      { serial: 'BAT10K-LFP-26A-5001', qrCode: 'SP-BAT10K-5001', name: 'LiFePO4 Battery 10 kWh High Voltage', brand: 'BYD', category: 'BATTERY', warranty: '10 Years Warranty' },
+      { serial: 'BAT15K-PW-26A-5001', qrCode: 'SP-BAT15K-5001', name: 'Wall-Mount 15 kWh Powerwall', brand: 'Pylontech', category: 'BATTERY', warranty: '10 Years Warranty' },
+      { serial: 'BAT5K-26A-5001', qrCode: 'SP-BAT5K-5001', name: 'Lithium Battery 5 kWh', brand: 'Luminous', category: 'BATTERY', warranty: '5 Years Warranty' },
+      { serial: 'BAT200-EX-26A-5001', qrCode: 'SP-EX200-5001', name: 'Solar Tubular Battery 200 Ah / 12V', brand: 'Exide Solar', category: 'BATTERY', warranty: '5 Years Warranty' },
+      { serial: 'CC100A-VIC-26A-5001', qrCode: 'SP-CC100-5001', name: 'SmartSolar MPPT Controller 100 A', brand: 'Victron Energy', category: 'OTHER', warranty: '5 Years Warranty' },
+      { serial: 'CC60A-26A-5001', qrCode: 'SP-CC60A-5001', name: 'Battery Charge Controller 60 A', brand: 'Microtek', category: 'OTHER', warranty: '5 Years Warranty' },
+      { serial: 'MTR3P-SEC-26A-5001', qrCode: 'SP-MTR3P-5001', name: 'Smart Bi-Directional Net Meter 3-Phase', brand: 'Secure Meters', category: 'OTHER', warranty: '5 Years Warranty' },
     ]
     const origin = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000'
     Promise.all(
@@ -505,6 +518,22 @@ function WarrantyLookupCard() {
     void lookup(code)
   }
 
+  const filteredSamples = sampleCategory === 'ALL'
+    ? sampleQrs
+    : sampleQrs.filter((s) => s.category === sampleCategory)
+
+  const quickTests = [
+    { label: '550W Bifacial', code: 'SP-BIFI-5001' },
+    { label: '580W TOPCon', code: 'SP-TOP-5001' },
+    { label: '6kW Hybrid', code: 'SP-HYB6K-5001' },
+    { label: '10kW Inverter', code: 'SP-INV10K-5001' },
+    { label: '10kWh Battery', code: 'SP-BAT10K-5001' },
+    { label: '15kWh Powerwall', code: 'SP-BAT15K-5001' },
+    { label: 'Microinverter', code: 'SP-MIC12-5001' },
+    { label: '100A MPPT', code: 'SP-CC100-5001' },
+    { label: 'Net Meter', code: 'SP-MTR3P-5001' },
+  ]
+
   return (
     <Card>
       <CardContent className="p-4 space-y-2">
@@ -516,7 +545,7 @@ function WarrantyLookupCard() {
             value={serial}
             onChange={(e) => { setSerial(e.target.value); setErr(null); setResult(null) }}
             onKeyDown={(e) => { if (e.key === 'Enter') lookup() }}
-            placeholder="e.g. PNL540-26A-000500"
+            placeholder="e.g. SP-BIFI-5001 or PNL550-BIFI-26A-5001"
             aria-label="Serial number"
           />
           <Button
@@ -534,16 +563,16 @@ function WarrantyLookupCard() {
 
         {/* Quick Sample Serials & View Sample QRs */}
         <div className="flex items-center gap-1.5 flex-wrap pt-1 text-xs text-slate-500">
-          <span>Quick test:</span>
-          {['PNL540-26A-000500', 'INV3K-26A-000312', 'INV5K-26A-000308'].map((s) => (
+          <span className="font-medium text-slate-600">Quick test:</span>
+          {quickTests.map((t) => (
             <button
-              key={s}
+              key={t.code}
               type="button"
-              onClick={() => { setSerial(s); void lookup(s) }}
+              onClick={() => { setSerial(t.code); void lookup(t.code) }}
               className="px-2 py-0.5 rounded bg-slate-100 hover:bg-blue-50 hover:text-blue-700 font-mono text-[11px] border border-slate-200 transition"
-              title={`Click to test serial ${s}`}
+              title={`Click to test ${t.label} (${t.code})`}
             >
-              {s}
+              {t.label}
             </button>
           ))}
           <Button
@@ -553,7 +582,7 @@ function WarrantyLookupCard() {
             className="h-6 px-1.5 text-xs text-blue-700 hover:text-blue-900 underline font-normal"
             onClick={() => setSampleQrOpen(true)}
           >
-            <QrCode className="h-3 w-3 mr-1 inline" /> View Sample QRs to Scan
+            <QrCode className="h-3 w-3 mr-1 inline" /> View All Scannable QRs
           </Button>
         </div>
 
@@ -566,56 +595,88 @@ function WarrantyLookupCard() {
           description="Point your camera at the QR code on the solar panel, inverter or certificate, or upload a photo."
         />
 
-        {/* Sample QR Codes Dialog */}
+        {/* Rich Sample QR Codes Dialog */}
         <Dialog open={sampleQrOpen} onOpenChange={setSampleQrOpen}>
-          <DialogContent className="max-w-xl">
+          <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle className="flex items-center gap-2">
                 <QrCode className="h-5 w-5 text-blue-600" />
-                Sample Equipment QR Codes
+                Equipment QR Code Testing Suite
               </DialogTitle>
               <DialogDescription>
-                Point your camera at any of these QR codes to test live scanning, or download them to test the image upload scanner.
+                Point your camera at any of these high-resolution QR codes to test live webcam/phone scanning, or download the PNG to test image upload scanning.
               </DialogDescription>
             </DialogHeader>
 
-            <div className="grid sm:grid-cols-3 gap-3 py-2">
-              {sampleQrs.map((item) => (
-                <div key={item.serial} className="rounded-xl border border-slate-200 bg-white p-3 flex flex-col items-center text-center space-y-2 shadow-sm">
-                  {item.dataUrl ? (
-                    <img src={item.dataUrl} alt={`QR for ${item.serial}`} className="w-32 h-32 object-contain border rounded p-1 bg-white" />
-                  ) : (
-                    <div className="w-32 h-32 grid place-items-center bg-slate-50 text-xs text-slate-400">Loading...</div>
+            {/* Category tabs */}
+            <div className="flex gap-1.5 border-b pb-2 flex-wrap">
+              {[
+                { key: 'ALL', label: 'All Products (15)' },
+                { key: 'PANEL', label: 'Solar Panels' },
+                { key: 'INVERTER', label: 'Inverters & Micro' },
+                { key: 'BATTERY', label: 'Batteries & Storage' },
+                { key: 'OTHER', label: 'Controllers & Meters' },
+              ].map((tab) => (
+                <button
+                  key={tab.key}
+                  type="button"
+                  onClick={() => setSampleCategory(tab.key as any)}
+                  className={cn(
+                    'px-3 py-1 rounded-full text-xs font-medium transition',
+                    sampleCategory === tab.key
+                      ? 'bg-blue-600 text-white shadow-sm'
+                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                   )}
-                  <div className="space-y-0.5 w-full">
-                    <div className="text-[11px] font-semibold text-slate-800 line-clamp-1">{item.name}</div>
-                    <div className="font-mono text-[10px] text-slate-500 truncate">SN: {item.serial}</div>
-                    <div className="font-mono text-[10px] text-blue-600">QR: {item.qrCode}</div>
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+
+            <div className="grid sm:grid-cols-3 gap-3 py-2">
+              {filteredSamples.map((item) => (
+                <div key={item.serial} className="rounded-xl border border-slate-200 bg-white p-3 flex flex-col items-center text-center space-y-2 shadow-sm hover:border-blue-300 transition">
+                  <div className="flex items-center justify-between w-full text-[10px]">
+                    <span className="font-semibold text-blue-700 bg-blue-50 px-2 py-0.5 rounded">{item.brand}</span>
+                    <span className="text-slate-500 font-medium">{item.warranty}</span>
                   </div>
-                  <div className="flex flex-col gap-1 w-full pt-1">
+
+                  {item.dataUrl ? (
+                    <img src={item.dataUrl} alt={`QR for ${item.serial}`} className="w-36 h-36 object-contain border rounded-lg p-1.5 bg-white shadow-inner" />
+                  ) : (
+                    <div className="w-36 h-36 grid place-items-center bg-slate-50 text-xs text-slate-400">Loading...</div>
+                  )}
+
+                  <div className="space-y-0.5 w-full">
+                    <div className="text-xs font-semibold text-slate-900 line-clamp-1" title={item.name}>{item.name}</div>
+                    <div className="font-mono text-[11px] text-slate-500 truncate" title={item.serial}>SN: {item.serial}</div>
+                    <div className="font-mono text-[11px] text-blue-600 font-medium">QR: {item.qrCode}</div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-1 w-full pt-1">
                     <Button
                       size="sm"
-                      className="h-7 text-xs w-full bg-blue-600 hover:bg-blue-700 text-white"
+                      className="h-7 text-xs bg-blue-600 hover:bg-blue-700 text-white"
                       onClick={() => {
                         setSampleQrOpen(false)
-                        setSerial(item.serial)
-                        void lookup(item.serial)
+                        setSerial(item.qrCode)
+                        void lookup(item.qrCode)
                       }}
                     >
-                      Check This Unit
+                      Check QR
                     </Button>
                     <Button
                       variant="outline"
                       size="sm"
-                      className="h-7 text-xs w-full gap-1"
+                      className="h-7 text-xs gap-1"
                       onClick={() => {
                         const a = document.createElement('a')
                         a.href = item.dataUrl
-                        a.download = `QR-${item.serial}.png`
+                        a.download = `QR-${item.qrCode}.png`
                         document.body.appendChild(a)
                         a.click()
                         document.body.removeChild(a)
-                        toast.success(`Downloaded QR image for ${item.serial}`)
+                        toast.success(`Downloaded QR image for ${item.name}`)
                       }}
                     >
                       <Download className="h-3 w-3" /> Save PNG
@@ -625,7 +686,8 @@ function WarrantyLookupCard() {
               ))}
             </div>
 
-            <DialogFooter>
+            <DialogFooter className="flex items-center justify-between sm:justify-between w-full border-t pt-3">
+              <span className="text-xs text-slate-500">Every QR points directly to its live warranty certificate page at <code className="bg-slate-100 px-1 py-0.5 rounded">/#/w/&lt;code&gt;</code></span>
               <Button variant="outline" onClick={() => setSampleQrOpen(false)}>Close</Button>
             </DialogFooter>
           </DialogContent>

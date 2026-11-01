@@ -12,6 +12,13 @@ export async function GET(req: NextRequest) {
       const unit = await lookupUnit(lookup)
       return { unit }
     }
-    return { units: await listUnits({ status: sp.get('status') ?? undefined, q: sp.get('q') ?? undefined }) }
+    return {
+      units: await listUnits({
+        status: sp.get('status') ?? undefined,
+        q: sp.get('q') ?? undefined,
+        productId: sp.get('productId') ?? undefined,
+        limit: sp.get('limit') ? Number(sp.get('limit')) : undefined,
+      }),
+    }
   })
 }

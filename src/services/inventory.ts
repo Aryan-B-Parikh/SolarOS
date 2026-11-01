@@ -287,15 +287,24 @@ export async function lookupUnit(code: string) {
   return unit
 }
 
-export async function listUnits(filter?: { status?: string; q?: string }) {
+export async function listUnits(filter?: { status?: string; q?: string; productId?: string; limit?: number }) {
   const where: Record<string, unknown> = {}
   if (filter?.status) where.status = filter.status
-  if (filter?.q) where.OR = [{ serialNumber: { contains: filter.q } }, { qrCode: { contains: filter.q } }, { product: { name: { contains: filter.q } } }]
+  if (filter?.productId) where.productId = filter.productId
+  if (filter?.q) {
+    const term = filter.q.trim()
+    where.OR = [
+      { serialNumber: { contains: term, mode: 'insensitive' } },
+      { qrCode: { contains: term, mode: 'insensitive' } },
+      { product: { name: { contains: term, mode: 'insensitive' } } },
+      { product: { sku: { contains: term, mode: 'insensitive' } } },
+    ]
+  }
   return db.inventoryUnit.findMany({
     where,
     include: { product: true, customer: true },
     orderBy: { createdAt: 'desc' },
-    take: 200,
+    take: filter?.limit ?? 500,
   })
 }
 

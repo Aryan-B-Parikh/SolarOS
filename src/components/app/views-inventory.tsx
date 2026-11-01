@@ -16,8 +16,9 @@ import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
 import { Alert, EmptyState, Field, Loading, PageHeader, StageChip } from './shared'
-import { Package, Printer, QrCode, AlertTriangle, Plus, ScanLine, ShoppingCart, Undo2, Download, ExternalLink } from 'lucide-react'
+import { Package, Printer, QrCode, AlertTriangle, Plus, ScanLine, ShoppingCart, Undo2, Download, ExternalLink, Camera, Eye } from 'lucide-react'
 import QRCode from 'qrcode'
+import { QrScannerModal } from './qr-scanner'
 
 // Draft-PO prefill handed from the stock view's low-stock action to Purchasing
 // (module scope: survives the hash-route view switch; FR-5.8)
@@ -319,7 +320,25 @@ function ReceiptLabels({ receiptId, labels }: { receiptId: string; labels: any[]
 export function UnitsView() {
   const [q, setQ] = useState('')
   const [status, setStatus] = useState('')
-  const { data, loading } = useData(() => api(`/inventory/units${status ? `?status=${status}` : ''}${q ? `${status ? '&' : '?'}q=${encodeURIComponent(q)}` : ''}`), [q, status])
+  const [productId, setProductId] = useState('')
+  const [scannerOpen, setScannerOpen] = useState(false)
+  const [qrSheetOpen, setQrSheetOpen] = useState(false)
+  const [qrSheetData, setQrSheetData] = useState<Array<{ serial: string; qrCode: string; name: string; brand: string; status: string; dataUrl: string }>>([])
+  const [sheetLoading, setSheetLoading] = useState(false)
+
+  const { data: prodsData } = useData(() => api('/products'), [])
+  const serializedProducts = (prodsData?.products ?? []).filter((p: any) => p.isSerialized)
+
+  const queryParams = new URLSearchParams()
+  if (status) queryParams.set('status', status)
+  if (q) queryParams.set('q', q)
+  if (productId) queryParams.set('productId', productId)
+  queryParams.set('limit', '500')
+
+  const { data, loading, reload } = useData(
+    () => api(`/inventory/units?${queryParams.toString()}`),
+    [q, status, productId]
+  )
   const units = data?.units ?? []
   const [selectedUnit, setSelectedUnit] = useState<any | null>(null)
   const [qrImg, setQrImg] = useState<string | null>(null)
@@ -336,6 +355,31 @@ export function UnitsView() {
       .catch((err) => console.error('Failed to generate QR code', err))
   }, [selectedUnit])
 
+  // Generate multi-unit QR sheet for quick testing/printing
+  const openQrSheet = async () => {
+    setQrSheetOpen(true)
+    setSheetLoading(true)
+    try {
+      const origin = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000'
+      const sampleSlice = units.slice(0, 24)
+      const list = await Promise.all(
+        sampleSlice.map(async (u: any) => ({
+          serial: u.serialNumber,
+          qrCode: u.qrCode,
+          name: u.product.name,
+          brand: u.product.brand ?? 'SunPower',
+          status: u.status,
+          dataUrl: await QRCode.toDataURL(`${origin}/#/w/${u.qrCode}`, { width: 200, margin: 2 }),
+        }))
+      )
+      setQrSheetData(list)
+    } catch (e) {
+      console.error(e)
+    } finally {
+      setSheetLoading(false)
+    }
+  }
+
   const downloadQr = () => {
     if (!qrImg || !selectedUnit) return
     const a = document.createElement('a')
@@ -347,38 +391,115 @@ export function UnitsView() {
     toast.success(`Downloaded QR code for ${selectedUnit.serialNumber}`)
   }
 
+  const handleScan = (scanned: string) => {
+    setQ(scanned)
+    // find unit if present in loaded list
+    const found = units.find((u: any) => u.qrCode === scanned || u.serialNumber === scanned)
+    if (found) {
+      setSelectedUnit(found)
+      toast.success(`Found unit: ${found.serialNumber}`)
+    } else {
+      toast.info(`Scanned code: ${scanned}`)
+    }
+  }
+
   return (
     <div className="space-y-4">
-      <PageHeader title="Units" sub="One row per serialized unit; view, download or scan QR codes for warranty check" />
-      <div className="flex gap-2 flex-wrap">
-        <Input placeholder="Search serial or QR code…" value={q} onChange={(e) => setQ(e.target.value)} className="max-w-xs" />
-        {['', 'IN_STOCK', 'PICKED', 'DISPATCHED', 'DELIVERED', 'INSTALLED', 'RMA', 'REPLACED'].map((s) => (
-          <button key={s} onClick={() => setStatus(s)} className={cn('rounded-full border px-3 py-1 text-xs font-medium', status === s ? 'border-blue-600 bg-blue-50 text-blue-800' : 'border-slate-200 text-slate-500')}>
+      <PageHeader
+        title="Units & QR Codes"
+        sub={`Tracking ${units.length} serialized units across solar panels, inverters, batteries and charge controllers`}
+        actions={
+          <div className="flex items-center gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              className="gap-1.5 border-blue-200 text-blue-700 hover:bg-blue-50"
+              onClick={() => setScannerOpen(true)}
+            >
+              <Camera className="h-4 w-4" /> Scan QR
+            </Button>
+            <Button
+              size="sm"
+              className="gap-1.5 bg-blue-700 hover:bg-blue-800 text-white"
+              onClick={openQrSheet}
+              disabled={units.length === 0}
+            >
+              <QrCode className="h-4 w-4" /> View QR Sheet ({Math.min(24, units.length)})
+            </Button>
+          </div>
+        }
+      />
+
+      <div className="flex gap-2 flex-wrap items-center">
+        <Input
+          placeholder="Search serial, QR code or product…"
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          className="max-w-xs text-sm"
+        />
+
+        {/* Product Dropdown Filter */}
+        <select
+          value={productId}
+          onChange={(e) => setProductId(e.target.value)}
+          className="h-9 rounded-md border border-slate-200 bg-white px-3 py-1 text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-600 max-w-[220px]"
+        >
+          <option value="">All Products ({serializedProducts.length})</option>
+          {serializedProducts.map((p: any) => (
+            <option key={p.id} value={p.id}>
+              {p.name}
+            </option>
+          ))}
+        </select>
+
+        {/* Status filters */}
+        {['', 'IN_STOCK', 'INSTALLED', 'PICKED', 'DISPATCHED', 'DELIVERED', 'RMA'].map((s) => (
+          <button
+            key={s}
+            onClick={() => setStatus(s)}
+            className={cn(
+              'rounded-full border px-3 py-1 text-xs font-medium transition',
+              status === s
+                ? 'border-blue-600 bg-blue-50 text-blue-800'
+                : 'border-slate-200 text-slate-500 hover:border-slate-300'
+            )}
+          >
             {s === '' ? 'All' : s.replace(/_/g, ' ').toLowerCase()}
           </button>
         ))}
       </div>
+
       {loading ? <Loading rows={6} /> : (
         <Card><CardContent className="p-0 overflow-x-auto">
           <table className="w-full text-sm min-w-[640px]">
             <thead><tr className="border-b text-left text-xs text-slate-400">
-              <th className="px-4 py-2.5 font-medium">Serial</th><th className="px-3 py-2.5 font-medium">Product</th><th className="px-3 py-2.5 font-medium">Status</th>
-              <th className="px-3 py-2.5 font-medium">Customer</th><th className="px-3 py-2.5 font-medium">Delivered</th><th className="px-4 py-2.5 font-medium text-right">QR Code &amp; Warranty</th>
+              <th className="px-4 py-2.5 font-medium">Serial &amp; QR</th>
+              <th className="px-3 py-2.5 font-medium">Product &amp; Brand</th>
+              <th className="px-3 py-2.5 font-medium">Status</th>
+              <th className="px-3 py-2.5 font-medium">Customer</th>
+              <th className="px-3 py-2.5 font-medium">Delivered</th>
+              <th className="px-4 py-2.5 font-medium text-right">Actions</th>
             </tr></thead>
             <tbody>
-              {units.slice(0, 100).map((u: any) => (
+              {units.slice(0, 150).map((u: any) => (
                 <tr key={u.id} className="border-b last:border-0 hover:bg-slate-50/50">
-                  <td className="px-4 py-2.5 font-mono text-xs font-medium text-slate-900">{u.serialNumber}</td>
-                  <td className="px-3 py-2.5">{u.product.name}</td>
+                  <td className="px-4 py-2.5">
+                    <div className="font-mono text-xs font-semibold text-slate-900">{u.serialNumber}</div>
+                    <div className="font-mono text-[11px] text-blue-600">QR: {u.qrCode}</div>
+                  </td>
+                  <td className="px-3 py-2.5">
+                    <div className="font-medium text-slate-800">{u.product.name}</div>
+                    <div className="text-[11px] text-slate-400">{u.product.brand ?? '—'} · {u.product.category}</div>
+                  </td>
                   <td className="px-3 py-2.5"><StageChip status={u.status} /></td>
-                  <td className="px-3 py-2.5">{u.customer?.name ?? '—'}</td>
+                  <td className="px-3 py-2.5 text-slate-700">{u.customer?.name ?? '—'}</td>
                   <td className="px-3 py-2.5 text-slate-500">{u.deliveredOn ? fmtDate(u.deliveredOn) : '—'}</td>
                   <td className="px-4 py-2.5 text-right">
                     <div className="flex items-center justify-end gap-1.5">
                       <Button size="sm" variant="outline" className="h-8 text-xs gap-1 border-blue-200 text-blue-700 hover:bg-blue-50" onClick={() => setSelectedUnit(u)}>
-                        <QrCode className="h-3.5 w-3.5" /> View QR Label
+                        <QrCode className="h-3.5 w-3.5" /> View QR
                       </Button>
-                      <Button size="sm" variant="ghost" className="h-8 text-xs text-slate-500" onClick={() => (window.location.hash = `/w/${u.qrCode}`)}>
+                      <Button size="sm" variant="ghost" className="h-8 text-xs text-slate-500 hover:text-blue-700" onClick={() => (window.location.hash = `/w/${u.qrCode}`)}>
                         <ExternalLink className="h-3.5 w-3.5 mr-1" /> /w/{u.qrCode}
                       </Button>
                     </div>
@@ -390,7 +511,81 @@ export function UnitsView() {
         </CardContent></Card>
       )}
 
-      {/* QR Label Modal */}
+      {/* QR Scanner Dialog for Staff / Warehouse */}
+      <QrScannerModal
+        open={scannerOpen}
+        onOpenChange={setScannerOpen}
+        onScan={handleScan}
+        title="Scan Serial / QR Label"
+        description="Scan any printed equipment label, or test by pointing at an on-screen QR code."
+      />
+
+      {/* Multi-Unit Printable QR Testing Sheet */}
+      <Dialog open={qrSheetOpen} onOpenChange={setQrSheetOpen}>
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <QrCode className="h-5 w-5 text-blue-600" />
+              Scannable QR Testing Sheet
+            </DialogTitle>
+            <DialogDescription>
+              High-resolution scannable QR codes for testing camera scanning and mobile warranty checks.
+            </DialogDescription>
+          </DialogHeader>
+
+          {sheetLoading ? (
+            <div className="py-12 text-center text-sm text-slate-500">Generating scannable QR codes…</div>
+          ) : (
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 py-2">
+              {qrSheetData.map((item) => (
+                <div key={item.serial} className="rounded-xl border border-slate-200 bg-white p-3 flex flex-col items-center text-center space-y-2 shadow-sm hover:border-blue-300 transition">
+                  <div className="text-[10px] uppercase font-semibold tracking-wider text-slate-400">{item.brand}</div>
+                  <img src={item.dataUrl} alt={`QR for ${item.serial}`} className="w-28 h-28 object-contain border rounded-lg p-1 bg-white shadow-inner" />
+                  <div className="w-full space-y-0.5">
+                    <div className="text-xs font-semibold text-slate-800 line-clamp-1" title={item.name}>{item.name}</div>
+                    <div className="font-mono text-[10px] text-slate-500 truncate">SN: {item.serial}</div>
+                    <div className="font-mono text-[10px] text-blue-600 font-medium">QR: {item.qrCode}</div>
+                  </div>
+                  <div className="flex gap-1 w-full pt-1">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-6 text-[10px] w-full"
+                      onClick={() => {
+                        const a = document.createElement('a')
+                        a.href = item.dataUrl
+                        a.download = `QR-${item.qrCode}.png`
+                        document.body.appendChild(a)
+                        a.click()
+                        document.body.removeChild(a)
+                        toast.success(`Downloaded ${item.qrCode}`)
+                      }}
+                    >
+                      <Download className="h-3 w-3 mr-1" /> PNG
+                    </Button>
+                    <Button
+                      size="sm"
+                      className="h-6 text-[10px] w-full bg-blue-600 hover:bg-blue-700 text-white"
+                      onClick={() => {
+                        window.location.hash = `/w/${item.qrCode}`
+                      }}
+                    >
+                      Open
+                    </Button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <DialogFooter className="flex items-center justify-between sm:justify-between w-full border-t pt-3">
+            <span className="text-xs text-slate-500">Showing {qrSheetData.length} scannable QR codes</span>
+            <Button variant="outline" onClick={() => setQrSheetOpen(false)}>Close</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Individual QR Label Modal */}
       {selectedUnit && (
         <Dialog open={!!selectedUnit} onOpenChange={(open) => { if (!open) setSelectedUnit(null) }}>
           <DialogContent className="max-w-md">
