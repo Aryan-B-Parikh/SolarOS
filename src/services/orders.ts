@@ -202,25 +202,33 @@ async function confirmOrderTx(orderId: string, actorId: string, via: string, tx:
     }
   }
 
-  const dispatchNumber = await nextNumber('DISPATCH', 'DSP', tx)
-  const dispatch = await tx.dispatch.create({
-    data: {
-      dispatchNumber, orderId: order.id, status: 'PICKING',
-      fromLocationId: wh.id, vehicleLocationId: veh.id,
-      scheduledOn: istToday(),
-    },
-  })
-  const products = await tx.product.findMany({ where: { id: { in: order.lines.map((l) => l.productId) } } })
-  const physicalLines = order.lines.filter((l) => products.find((p) => p.id === l.productId)?.category !== 'SERVICE')
-  if (physicalLines.length > 0) {
-    await tx.dispatchLine.createMany({
-      data: physicalLines.map((l) => ({ dispatchId: dispatch.id, orderLineId: l.id, productId: l.productId, qtyRequired: l.qty })),
+  let dispatch = await tx.dispatch.findFirst({ where: { orderId: order.id } })
+  if (!dispatch) {
+    const dispatchNumber = await nextNumber('DISPATCH', 'DSP', tx)
+    const createdDispatch = await tx.dispatch.create({
+      data: {
+        dispatchNumber, orderId: order.id, status: 'PICKING',
+        fromLocationId: wh.id, vehicleLocationId: veh.id,
+        scheduledOn: istToday(),
+      },
     })
+    dispatch = createdDispatch
+    const products = await tx.product.findMany({ where: { id: { in: order.lines.map((l) => l.productId) } } })
+    const physicalLines = order.lines.filter((l) => products.find((p) => p.id === l.productId)?.category !== 'SERVICE')
+    if (physicalLines.length > 0) {
+      await tx.dispatchLine.createMany({
+        data: physicalLines.map((l) => ({ dispatchId: createdDispatch.id, orderLineId: l.id, productId: l.productId, qtyRequired: l.qty })),
+      })
+    }
   }
 
   // installation job + crew suggestions (Automation 7)
-  const installation = await tx.installation.create({ data: { orderId: order.id, status: 'SCHEDULED' } })
-  const suggestions = await suggestCrews(installation.id, order, settings, tx)
+  let suggestions: any[] = []
+  let installation = await tx.installation.findUnique({ where: { orderId: order.id } })
+  if (!installation) {
+    installation = await tx.installation.create({ data: { orderId: order.id, status: 'SCHEDULED' } })
+    suggestions = await suggestCrews(installation.id, order, settings, tx)
+  }
 
   await tx.order.update({ where: { id: order.id }, data: { status: 'CONFIRMED', confirmedAt: new Date(), overrideBy: via === 'manual override' ? actorId : null } })
 
@@ -235,7 +243,7 @@ async function confirmOrderTx(orderId: string, actorId: string, via: string, tx:
   }
   const warehouseEmail = await staffEmail('WAREHOUSE')
   await enqueue([
-    { channel: 'EMAIL', recipient: warehouseEmail, template: 'ORDER_CONFIRMED_WAREHOUSE', payload: { orderNumber: order.orderNumber, dispatchNumber } },
+    { channel: 'EMAIL', recipient: warehouseEmail, template: 'ORDER_CONFIRMED_WAREHOUSE', payload: { orderNumber: order.orderNumber, dispatchNumber: dispatch?.dispatchNumber ?? '' } },
     { channel: 'SMS', recipient: order.customer.phone.slice(0, 6) + 'XXXX' + order.customer.phone.slice(-3), template: 'ORDER_CONFIRMED_CUSTOMER', payload: { to: order.customer.phone, name: order.customer.name, orderNumber: order.orderNumber } },
   ], tx)
   await audit({ actorType: 'USER', actorId, entityType: 'order', entityId: order.id, action: 'confirm', before: { status: 'PENDING_ADVANCE' }, after: { status: 'CONFIRMED', via, suggestions: suggestions.length } }, tx)

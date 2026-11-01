@@ -159,6 +159,11 @@ const TEMPLATES: Record<string, Renderer> = {
     title: 'We have received your payment',
     body: `${greeting(p.name)}${para(`Your online payment of ${inr(p.amountPaise)} for order ${str(p.orderNumber)} has been received. Thank you!`)}${row('Receipt reference', str(p.receipt) || '—')}${row('Paid towards', str(p.orderNumber) || '—')}${row('Balance due', inr(p.balancePaise))}${para('You can see the updated balance any time on your My SunPower page.')}`,
   }),
+  PAYMENT_RECEIVED: (p) => ({
+    subject: `Payment receipt: ${inr(p.amountPaise)} received (${str(p.method)}) — Order ${str(p.orderNumber)}`,
+    title: 'Payment Receipt Confirmation',
+    body: `${greeting(p.name)}${para(`We have successfully recorded your ${str(p.method)} payment of ${inr(p.amountPaise)} towards order ${str(p.orderNumber)}.`)}${row('Payment Method', str(p.method))}${row('Reference / Receipt', str(p.reference) || '—')}${row('Amount Paid', inr(p.amountPaise))}${row('Remaining Balance', inr(p.balancePaise))}${p.link ? link('View Order in My SunPower', p.link) : ''}`,
+  }),
   INSTALLATION_SCHEDULED: (p) => ({
     subject: `Installation scheduled for ${fmtDate(p.date)}`,
     title: 'Your installation date is confirmed',

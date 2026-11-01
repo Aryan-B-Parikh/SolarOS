@@ -28,8 +28,9 @@ export async function handler<T>(
     if (result instanceof NextResponse) return result
     return NextResponse.json(result ?? { ok: true })
   } catch (err) {
-    if (err instanceof AppError) {
-      return NextResponse.json(errorBody(err, rid), { status: err.status })
+    if (err instanceof AppError || (err && typeof err === 'object' && 'code' in err && 'status' in err)) {
+      const appErr = err as AppError
+      return NextResponse.json(errorBody(appErr, rid), { status: appErr.status || 400 })
     }
     console.error(`[api:${rid}]`, err)
     return NextResponse.json(errorBody(err, rid), { status: 500 })

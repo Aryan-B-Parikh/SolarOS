@@ -64,8 +64,9 @@ export class AppError extends Error {
 }
 
 export function errorBody(err: unknown, requestId: string) {
-  if (err instanceof AppError) {
-    return { error: { code: err.code, message: err.message, details: err.details ?? null, requestId } }
+  if (err instanceof AppError || (err && typeof err === 'object' && 'code' in err && 'message' in err)) {
+    const appErr = err as AppError
+    return { error: { code: appErr.code, message: appErr.message, details: appErr.details ?? null, requestId } }
   }
   console.error('[internal]', err)
   return { error: { code: 'INTERNAL' as ErrorCode, message: 'Something went wrong on our side.', details: null, requestId } }

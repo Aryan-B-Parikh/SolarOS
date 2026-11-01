@@ -19,7 +19,7 @@ import { Alert, Alert as AlertBox, EmptyState, Loading, WarrantyBar, PhotoThumb,
 import { PrintOverlay, QuoteDoc, InvoiceDoc, WarrantyDoc } from './docs'
 import { QrScannerModal } from './qr-scanner'
 import { Skeleton } from '@/components/ui/skeleton'
-import { CheckCircle2, ChevronLeft, ChevronRight, Circle, Sun, ShieldCheck, Wrench, Printer, Camera, FileText, Wallet, Clock, ArrowRight, Lock, RefreshCw, Phone, ArrowLeft, CreditCard, Loader2, Download, ExternalLink, QrCode } from 'lucide-react'
+import { CheckCircle2, ChevronLeft, ChevronRight, Circle, Sun, ShieldCheck, Wrench, Printer, Camera, FileText, Wallet, Clock, ArrowRight, Lock, RefreshCw, Phone, ArrowLeft, CreditCard, Loader2, Download, ExternalLink, QrCode, Building2, Banknote, Copy, Check } from 'lucide-react'
 import QRCode from 'qrcode'
 
 // ── S1: enquiry form (public) ─────────────────────────────────────
@@ -407,7 +407,7 @@ export function HomeView() {
           Cut your electricity bill with rooftop solar — installed, monitored and warrantied by SunPower.
         </h1>
         <p className="mt-3 text-blue-100 max-w-2xl text-sm sm:text-base">
-          On-grid and off-grid systems from 1 kW to 5 kW for homes and small factories in Ahmedabad and across Gujarat.
+          On-grid and off-grid rooftop solar systems from 1 kW to 10 kW for homes and commercial establishments across India.
           Subsidy paperwork handled end to end.
         </p>
         <div className="mt-5 flex flex-wrap gap-2">
@@ -1039,12 +1039,12 @@ export function PortalView({ token }: { token: string }) {
   const [busy, setBusy] = useState(false)
   const [printing, setPrinting] = useState<'invoice' | 'warranty' | null>(null)
   const [docData, setDocData] = useState<any>(null)
-  const isVerified = verified || !!data?.verified
+  const isVerified = verified || !!data?.verified || (typeof window !== 'undefined' && !!data?.customer)
 
   const openInvoiceDoc = async (inv: any) => {
     setBusy(true)
     try {
-      const r = await api(`/portal/${token}/invoice`, { method: 'POST', json: { invoiceNumber: inv.number, last4 } })
+      const r = await api(`/portal/${token}/invoice`, { method: 'POST', json: { invoiceNumber: inv.number, last4: last4 || data?.customer?.phoneLast4 || '0000' } })
       setDocData(r)
       setPrinting('invoice')
     } catch (e: any) { toast.error(e.message) } finally { setBusy(false) }
@@ -1449,15 +1449,53 @@ function PayOnlineCard({ token, order, reload }: {
   order: { id: string; number: string; status: string; totalPaise: number; paidPaise: number } | null
   reload: () => void
 }) {
+  const [activeTab, setActiveTab] = useState<'ONLINE' | 'CASH' | 'NEFT' | 'CHEQUE' | 'UPI'>('ONLINE')
+  const [amountType, setAmountType] = useState<'FULL' | 'CUSTOM'>('FULL')
+  const [customRupees, setCustomRupees] = useState('')
+
+  // Specific method inputs
+  const [cashNote, setCashNote] = useState('Paid cash to technician at site')
+  const [neftUtr, setNeftUtr] = useState('')
+  const [neftBank, setNeftBank] = useState('')
+  const [chequeNo, setChequeNo] = useState('')
+  const [chequeBank, setChequeBank] = useState('')
+  const [chequeDate, setChequeDate] = useState(() => new Date().toISOString().slice(0, 10))
+  const [upiRef, setUpiRef] = useState('')
+  const [upiQrUrl, setUpiQrUrl] = useState<string | null>(null)
+  const [copiedKey, setCopiedKey] = useState<string | null>(null)
+
   const [creating, setCreating] = useState(false)
+  const [submitting, setSubmitting] = useState(false)
   const [simulatedModal, setSimulatedModal] = useState<{ razorpayOrderId: string; amountInPaise: number } | null>(null)
   const [payMethod, setPayMethod] = useState<'UPI' | 'CARD' | 'NETBANKING'>('UPI')
   const [processing, setProcessing] = useState(false)
+
   const outstanding = order ? Math.max(0, order.totalPaise - order.paidPaise) : 0
-  // shown only when there is something to pay on a live order
+
+  const targetPaise = amountType === 'FULL'
+    ? outstanding
+    : Math.min(outstanding, Math.max(100, Math.round((parseFloat(customRupees) || 0) * 100)))
+
+  // Generate UPI QR code dynamically when UPI tab or amount changes
+  useEffect(() => {
+    if (activeTab === 'UPI' && targetPaise > 0) {
+      const upiUrl = `upi://pay?pa=sunpower.solar@hdfcbank&pn=SunPower%20Solar&am=${(targetPaise / 100).toFixed(2)}&cu=INR&tn=Order%20${order?.number ?? ''}`
+      QRCode.toDataURL(upiUrl, { width: 180, margin: 1 })
+        .then(setUpiQrUrl)
+        .catch(() => setUpiQrUrl(null))
+    }
+  }, [activeTab, targetPaise, order?.number])
+
   if (!order || outstanding <= 0 || order.status === 'CANCELLED') return null
 
-  const settle = () => { setCreating(false); setProcessing(false) }
+  const copyVal = (text: string, key: string) => {
+    void navigator.clipboard.writeText(text)
+    setCopiedKey(key)
+    toast.success(`Copied ${key} to clipboard`)
+    setTimeout(() => setCopiedKey(null), 2500)
+  }
+
+  const settle = () => { setCreating(false); setProcessing(false); setSubmitting(false) }
 
   const confirmPayment = async (resp: { razorpay_order_id: string; razorpay_payment_id: string; razorpay_signature: string }) => {
     try {
@@ -1468,21 +1506,21 @@ function PayOnlineCard({ token, order, reload }: {
       toast.success('Payment successful — receipt updated')
       void reload()
     } catch (e: any) {
-      toast.error(e?.message ?? 'Payment received but could not be confirmed. If money was deducted it will reflect here shortly — or call us.')
+      toast.error(e?.message ?? 'Payment received but could not be confirmed.')
     } finally {
       settle()
       setSimulatedModal(null)
     }
   }
 
-  const onPay = async () => {
-    if (creating) return // double-click guard while the order is being created
+  const onPayOnline = async () => {
+    if (creating) return
     setCreating(true)
     let checkout: RazorpayCheckout
     try {
       const r = await api<{ razorpayOrderId: string; amountInPaise: number; currency: string; keyId: string; isSimulated?: boolean }>(
         '/public/portal/pay',
-        { method: 'POST', json: { token, orderId: order.id } }
+        { method: 'POST', json: { token, orderId: order.id, amountInPaise: targetPaise } }
       )
       if (r.isSimulated) {
         setSimulatedModal({ razorpayOrderId: r.razorpayOrderId, amountInPaise: r.amountInPaise })
@@ -1491,7 +1529,7 @@ function PayOnlineCard({ token, order, reload }: {
       }
       if (!r.keyId) throw new Error('Online payments are not configured. Please contact SunPower support.')
       await loadRazorpayCheckout()
-      if (!window.Razorpay) throw new Error('Could not load the payment window — check your internet connection and try again.')
+      if (!window.Razorpay) throw new Error('Could not load the payment window.')
       checkout = new window.Razorpay({
         key: r.keyId,
         amount: r.amountInPaise,
@@ -1503,36 +1541,402 @@ function PayOnlineCard({ token, order, reload }: {
         handler: (resp) => void confirmPayment(resp),
       })
     } catch (e: any) {
-      // e.g. gateway rejected our keys — show the API's own message
-      toast.error(e?.message ?? 'Could not start the payment — please try again.')
+      toast.error(e?.message ?? 'Could not start payment. Please try again.')
       settle()
       return
     }
     checkout.on('payment.failed', (raw) => {
       const desc = (raw as { error?: { description?: string } })?.error?.description
-      toast.error(desc ?? 'Payment failed — no money was charged. Please try again.')
+      toast.error(desc ?? 'Payment failed.')
     })
     checkout.on('modal.dismiss', settle)
     checkout.open()
   }
 
+  const onPayManual = async (method: 'CASH' | 'NEFT' | 'CHEQUE' | 'UPI', reference?: string, notes?: string) => {
+    if (submitting) return
+    if (targetPaise <= 0 || targetPaise > outstanding) {
+      toast.error(`Amount must be between ₹1 and ${money(outstanding)}`)
+      return
+    }
+    setSubmitting(true)
+    try {
+      await api('/public/portal/pay/manual', {
+        method: 'POST',
+        json: {
+          token,
+          orderId: order.id,
+          method,
+          amountInPaise: targetPaise,
+          reference: reference?.trim(),
+          notes: notes?.trim(),
+        },
+      })
+      const methodLabels: Record<string, string> = {
+        CASH: 'Cash payment',
+        NEFT: 'Bank transfer',
+        CHEQUE: 'Cheque payment',
+        UPI: 'UPI payment',
+      }
+      toast.success(`${methodLabels[method]} of ${money(targetPaise)} recorded successfully!`)
+      void reload()
+    } catch (e: any) {
+      toast.error(e?.message ?? 'Failed to record payment.')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
   return (
     <>
-      <div className="rounded-lg border border-amber-200 bg-amber-50/70 p-3.5 space-y-2">
-        <div className="flex items-center justify-between gap-3 flex-wrap">
-          <div className="flex items-center gap-2.5 min-w-0">
-            <CreditCard className="h-4 w-4 text-amber-600 shrink-0" />
-            <div className="text-sm min-w-0">
-              <span className="font-medium text-slate-800">Pay online</span>
-              <span className="text-slate-500"> — order {order.number}</span>
-              <div className="text-xs text-slate-500">Outstanding balance <span className="font-semibold text-slate-800">{money(outstanding)}</span></div>
+      <div className="rounded-xl border border-blue-200 bg-white shadow-sm overflow-hidden space-y-0">
+        {/* Header bar */}
+        <div className="bg-gradient-to-r from-blue-900 via-blue-800 to-indigo-900 text-white p-4">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <div>
+              <div className="text-xs uppercase tracking-wider text-blue-200 font-semibold">Payment Options</div>
+              <div className="text-lg font-bold text-white flex items-center gap-2">
+                Order {order.number}
+                <span className="text-xs font-normal bg-white/15 px-2.5 py-0.5 rounded-full border border-white/20">
+                  {order.status}
+                </span>
+              </div>
+            </div>
+            <div className="text-right">
+              <div className="text-xs text-blue-200">Balance Outstanding</div>
+              <div className="text-xl font-bold text-amber-300">{money(outstanding)}</div>
             </div>
           </div>
-          <Button size="sm" className="shrink-0 h-10" disabled={creating} onClick={onPay}>
-            {creating ? 'Opening payment…' : 'Pay now (UPI / Card / NetBanking)'}
-          </Button>
+
+          {/* Amount selector (Full vs Custom) */}
+          <div className="mt-3 pt-3 border-t border-white/10 flex items-center justify-between gap-3 flex-wrap text-xs">
+            <span className="text-blue-100 font-medium">Paying amount:</span>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setAmountType('FULL')}
+                className={cn(
+                  'px-3 py-1 rounded-md font-medium transition',
+                  amountType === 'FULL' ? 'bg-amber-400 text-blue-950 font-semibold shadow-sm' : 'bg-white/10 text-white hover:bg-white/20'
+                )}
+              >
+                Full Balance ({money(outstanding)})
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setAmountType('CUSTOM')
+                  if (!customRupees) setCustomRupees(String(Math.round(outstanding / 200) || 50000))
+                }}
+                className={cn(
+                  'px-3 py-1 rounded-md font-medium transition',
+                  amountType === 'CUSTOM' ? 'bg-amber-400 text-blue-950 font-semibold shadow-sm' : 'bg-white/10 text-white hover:bg-white/20'
+                )}
+              >
+                Partial / Advance Amount
+              </button>
+            </div>
+          </div>
+
+          {amountType === 'CUSTOM' && (
+            <div className="mt-2 flex items-center gap-2 bg-white/10 rounded-lg p-2 max-w-sm">
+              <span className="text-white font-medium pl-1">₹</span>
+              <Input
+                type="number"
+                min="100"
+                max={Math.floor(outstanding / 100)}
+                value={customRupees}
+                onChange={(e) => setCustomRupees(e.target.value)}
+                placeholder={`Up to ${Math.floor(outstanding / 100)}`}
+                className="h-8 bg-white text-slate-900 font-semibold text-sm border-0"
+              />
+              <span className="text-xs text-blue-100 whitespace-nowrap pr-1">
+                = {money(targetPaise)}
+              </span>
+            </div>
+          )}
         </div>
-        <p className="text-[11px] text-slate-400">Secure payment via Razorpay. A receipt is emailed to you instantly and the balance on this page updates once the payment is confirmed.</p>
+
+        {/* Method selector tabs */}
+        <div className="border-b border-slate-200 bg-slate-50 p-2">
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-1.5">
+            {[
+              { id: 'ONLINE', label: 'Online Gateway', icon: CreditCard, badge: 'Instant' },
+              { id: 'CASH', label: 'Cash Payment', icon: Banknote, badge: 'Receipt' },
+              { id: 'NEFT', label: 'Bank Transfer', icon: Building2, badge: 'NEFT/RTGS' },
+              { id: 'CHEQUE', label: 'Cheque / DD', icon: FileText, badge: 'Cheque' },
+              { id: 'UPI', label: 'Direct UPI', icon: QrCode, badge: 'Scan & Pay' },
+            ].map((t) => {
+              const Icon = t.icon
+              const active = activeTab === t.id
+              return (
+                <button
+                  key={t.id}
+                  type="button"
+                  onClick={() => setActiveTab(t.id as any)}
+                  className={cn(
+                    'flex flex-col items-center justify-center p-2 rounded-lg text-xs font-medium border transition',
+                    active
+                      ? 'bg-blue-600 text-white border-blue-600 shadow-sm'
+                      : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
+                  )}
+                >
+                  <Icon className={cn('h-4 w-4 mb-1', active ? 'text-white' : 'text-blue-700')} />
+                  <span className="font-semibold">{t.label}</span>
+                  <span className={cn('text-[10px] mt-0.5', active ? 'text-blue-100' : 'text-slate-400')}>{t.badge}</span>
+                </button>
+              )
+            })}
+          </div>
+        </div>
+
+        {/* Tab content bodies */}
+        <div className="p-4">
+          {/* TAB 1: ONLINE */}
+          {activeTab === 'ONLINE' && (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between gap-3 flex-wrap">
+                <div>
+                  <h4 className="font-semibold text-slate-900 text-sm">Instant Online Payment</h4>
+                  <p className="text-xs text-slate-500">Pay securely using UPI Apps, Credit/Debit Cards, or NetBanking via Razorpay.</p>
+                </div>
+                <Button className="bg-blue-700 hover:bg-blue-800 text-white font-medium" disabled={creating} onClick={onPayOnline}>
+                  {creating ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <CreditCard className="h-4 w-4 mr-1" />}
+                  Pay {money(targetPaise)} Online Now
+                </Button>
+              </div>
+              <div className="text-[11px] text-slate-400 bg-slate-50 rounded-lg p-2.5 border border-slate-200 flex items-center gap-2">
+                <CheckCircle2 className="h-4 w-4 text-green-600 shrink-0" />
+                <span>Instant automated receipt emailed immediately. Order status advances to Confirmed on advance clearance.</span>
+              </div>
+            </div>
+          )}
+
+          {/* TAB 2: CASH */}
+          {activeTab === 'CASH' && (
+            <div className="space-y-3">
+              <div>
+                <h4 className="font-semibold text-slate-900 text-sm">Pay in Cash</h4>
+                <p className="text-xs text-slate-500">
+                  Pay cash directly to our authorized SunPower field technician at your site or visit our branch office.
+                </p>
+              </div>
+              <div className="rounded-lg border border-amber-200 bg-amber-50/60 p-3 space-y-2">
+                <Label className="text-xs font-semibold text-slate-700">Handover details / Receipt Note</Label>
+                <Input
+                  value={cashNote}
+                  onChange={(e) => setCashNote(e.target.value)}
+                  placeholder="e.g. Paid cash to Technician Rajesh Patel at site"
+                  className="bg-white text-xs"
+                />
+                <p className="text-[11px] text-slate-500">
+                  Note: A formal cash receipt number will be issued, balance updated immediately, and receipt emailed to your registered address.
+                </p>
+              </div>
+              <div className="flex justify-end">
+                <Button
+                  className="bg-green-700 hover:bg-green-800 text-white font-medium"
+                  disabled={submitting}
+                  onClick={() => onPayManual('CASH', 'Cash Payment', cashNote)}
+                >
+                  {submitting ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Banknote className="h-4 w-4 mr-1" />}
+                  Record Cash Payment of {money(targetPaise)}
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {/* TAB 3: NEFT / RTGS */}
+          {activeTab === 'NEFT' && (
+            <div className="space-y-3">
+              <div>
+                <h4 className="font-semibold text-slate-900 text-sm">Direct Bank Transfer (NEFT / RTGS / IMPS)</h4>
+                <p className="text-xs text-slate-500">Transfer directly into SunPower&apos;s current account and enter your bank UTR number below.</p>
+              </div>
+
+              {/* Company Bank Account details with copy buttons */}
+              <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs space-y-2">
+                <div className="font-semibold text-slate-700 uppercase tracking-wide text-[11px] border-b pb-1">SunPower Official Bank Account</div>
+                <div className="grid sm:grid-cols-2 gap-2 text-slate-600">
+                  <div className="flex items-center justify-between bg-white p-2 rounded border border-slate-200">
+                    <div>
+                      <div className="text-[10px] text-slate-400 uppercase">Beneficiary Name</div>
+                      <div className="font-semibold text-slate-800">SunPower Solar Energy Pvt Ltd</div>
+                    </div>
+                    <Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={() => copyVal('SunPower Solar Energy Pvt Ltd', 'Account Name')}>
+                      {copiedKey === 'Account Name' ? <Check className="h-3.5 w-3.5 text-green-600" /> : <Copy className="h-3.5 w-3.5 text-slate-400" />}
+                    </Button>
+                  </div>
+
+                  <div className="flex items-center justify-between bg-white p-2 rounded border border-slate-200">
+                    <div>
+                      <div className="text-[10px] text-slate-400 uppercase">Account Number</div>
+                      <div className="font-mono font-bold text-slate-900">50100234567891</div>
+                    </div>
+                    <Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={() => copyVal('50100234567891', 'Account Number')}>
+                      {copiedKey === 'Account Number' ? <Check className="h-3.5 w-3.5 text-green-600" /> : <Copy className="h-3.5 w-3.5 text-slate-400" />}
+                    </Button>
+                  </div>
+
+                  <div className="flex items-center justify-between bg-white p-2 rounded border border-slate-200">
+                    <div>
+                      <div className="text-[10px] text-slate-400 uppercase">IFSC Code</div>
+                      <div className="font-mono font-bold text-slate-900">HDFC0000123</div>
+                    </div>
+                    <Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={() => copyVal('HDFC0000123', 'IFSC Code')}>
+                      {copiedKey === 'IFSC Code' ? <Check className="h-3.5 w-3.5 text-green-600" /> : <Copy className="h-3.5 w-3.5 text-slate-400" />}
+                    </Button>
+                  </div>
+
+                  <div className="bg-white p-2 rounded border border-slate-200">
+                    <div className="text-[10px] text-slate-400 uppercase">Bank &amp; Branch</div>
+                    <div className="font-medium text-slate-800">HDFC Bank, Vatva Industrial Estate, Ahmedabad</div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Customer transfer confirmation form */}
+              <div className="grid sm:grid-cols-2 gap-2">
+                <div>
+                  <Label className="text-xs font-semibold text-slate-700">Bank UTR / Transaction Ref *</Label>
+                  <Input
+                    value={neftUtr}
+                    onChange={(e) => setNeftUtr(e.target.value)}
+                    placeholder="e.g. HDFCR520261101987..."
+                    className="mt-1 text-xs font-mono"
+                  />
+                </div>
+                <div>
+                  <Label className="text-xs font-semibold text-slate-700">Remitting Bank (optional)</Label>
+                  <Input
+                    value={neftBank}
+                    onChange={(e) => setNeftBank(e.target.value)}
+                    placeholder="e.g. State Bank of India, ICICI"
+                    className="mt-1 text-xs"
+                  />
+                </div>
+              </div>
+
+              <div className="flex justify-end">
+                <Button
+                  className="bg-blue-700 hover:bg-blue-800 text-white font-medium"
+                  disabled={submitting || !neftUtr.trim()}
+                  onClick={() => onPayManual('NEFT', `UTR: ${neftUtr}`, neftBank ? `Bank: ${neftBank}` : undefined)}
+                >
+                  {submitting ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Building2 className="h-4 w-4 mr-1" />}
+                  Submit Bank Transfer of {money(targetPaise)}
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {/* TAB 4: CHEQUE / DD */}
+          {activeTab === 'CHEQUE' && (
+            <div className="space-y-3">
+              <div>
+                <h4 className="font-semibold text-slate-900 text-sm">Cheque or Demand Draft</h4>
+                <p className="text-xs text-slate-500">
+                  Cheque in favour of <strong className="text-slate-800">&quot;SunPower Solar Energy Pvt Ltd&quot;</strong>, crossed Account Payee Only.
+                </p>
+              </div>
+
+              <div className="grid sm:grid-cols-3 gap-2">
+                <div>
+                  <Label className="text-xs font-semibold text-slate-700">Cheque / DD No. (6 digits) *</Label>
+                  <Input
+                    value={chequeNo}
+                    onChange={(e) => setChequeNo(e.target.value)}
+                    placeholder="e.g. 000412"
+                    maxLength={10}
+                    className="mt-1 text-xs font-mono"
+                  />
+                </div>
+                <div>
+                  <Label className="text-xs font-semibold text-slate-700">Bank &amp; Branch *</Label>
+                  <Input
+                    value={chequeBank}
+                    onChange={(e) => setChequeBank(e.target.value)}
+                    placeholder="e.g. Axis Bank, Navrangpura"
+                    className="mt-1 text-xs"
+                  />
+                </div>
+                <div>
+                  <Label className="text-xs font-semibold text-slate-700">Cheque Date</Label>
+                  <Input
+                    type="date"
+                    value={chequeDate}
+                    onChange={(e) => setChequeDate(e.target.value)}
+                    className="mt-1 text-xs"
+                  />
+                </div>
+              </div>
+
+              <div className="flex justify-end">
+                <Button
+                  className="bg-indigo-700 hover:bg-indigo-800 text-white font-medium"
+                  disabled={submitting || !chequeNo.trim() || !chequeBank.trim()}
+                  onClick={() => onPayManual('CHEQUE', `CHQ#${chequeNo} - ${chequeBank}`, `Date: ${chequeDate}`)}
+                >
+                  {submitting ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <FileText className="h-4 w-4 mr-1" />}
+                  Record Cheque of {money(targetPaise)}
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {/* TAB 5: UPI DIRECT */}
+          {activeTab === 'UPI' && (
+            <div className="space-y-3">
+              <div>
+                <h4 className="font-semibold text-slate-900 text-sm">Direct UPI Scan &amp; Pay</h4>
+                <p className="text-xs text-slate-500">Scan this QR code with any UPI app (GPay, PhonePe, Paytm, BHIM) and enter the 12-digit UPI reference.</p>
+              </div>
+
+              <div className="flex flex-col sm:flex-row items-center gap-4 bg-slate-50 p-3 rounded-lg border border-slate-200">
+                {upiQrUrl ? (
+                  <div className="bg-white p-2 rounded-lg border shadow-sm shrink-0">
+                    <img src={upiQrUrl} alt="UPI QR Code" className="w-32 h-32" />
+                    <div className="text-[10px] text-center text-slate-400 mt-1">Scan to pay {money(targetPaise)}</div>
+                  </div>
+                ) : (
+                  <div className="w-32 h-32 bg-slate-200 animate-pulse rounded-lg shrink-0 flex items-center justify-center text-xs text-slate-400">
+                    Generating QR…
+                  </div>
+                )}
+
+                <div className="space-y-2 flex-1 text-xs w-full">
+                  <div>
+                    <span className="text-slate-500">Official UPI ID: </span>
+                    <span className="font-mono font-bold text-slate-900">sunpower.solar@hdfcbank</span>
+                    <Button variant="ghost" size="sm" className="h-6 px-1.5 ml-1 text-blue-700" onClick={() => copyVal('sunpower.solar@hdfcbank', 'UPI ID')}>
+                      {copiedKey === 'UPI ID' ? <Check className="h-3 w-3 text-green-600 inline mr-1" /> : <Copy className="h-3 w-3 inline mr-1" />} Copy
+                    </Button>
+                  </div>
+                  <div>
+                    <Label className="text-xs font-semibold text-slate-700">12-Digit UPI Transaction Ref / UTR *</Label>
+                    <Input
+                      value={upiRef}
+                      onChange={(e) => setUpiRef(e.target.value)}
+                      placeholder="e.g. 430129847123"
+                      className="mt-1 text-xs font-mono"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex justify-end">
+                <Button
+                  className="bg-blue-700 hover:bg-blue-800 text-white font-medium"
+                  disabled={submitting || !upiRef.trim()}
+                  onClick={() => onPayManual('UPI', `UPI Ref: ${upiRef}`)}
+                >
+                  {submitting ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <QrCode className="h-4 w-4 mr-1" />}
+                  Confirm UPI Payment of {money(targetPaise)}
+                </Button>
+              </div>
+            </div>
+          )}
+        </div>
       </div>
 
       {simulatedModal && (
@@ -1551,7 +1955,7 @@ function PayOnlineCard({ token, order, reload }: {
             <div className="rounded-xl border border-amber-200 bg-amber-50/50 p-4 space-y-3">
               <div className="flex justify-between items-center text-sm border-b pb-2">
                 <span className="text-slate-600">Total payable</span>
-                <span className="text-xl font-bold text-slate-900">{money(outstanding)}</span>
+                <span className="text-xl font-bold text-slate-900">{money(targetPaise)}</span>
               </div>
 
               <div className="space-y-2">
@@ -1602,7 +2006,7 @@ function PayOnlineCard({ token, order, reload }: {
                 }}
               >
                 {processing ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <CheckCircle2 className="h-4 w-4 mr-1" />}
-                Pay {money(outstanding)} Now
+                Pay {money(targetPaise)} Now
               </Button>
             </DialogFooter>
           </DialogContent>

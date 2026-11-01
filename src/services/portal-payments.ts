@@ -9,7 +9,7 @@ import { db } from '@/lib/db'
 import { AppError } from '@/lib/errors'
 import { verifyLink } from '@/lib/access-links'
 import { recordPayment } from '@/services/orders'
-import { enqueue } from '@/lib/outbox'
+import { enqueue, runOutbox } from '@/lib/outbox'
 import {
   createRazorpayOrder,
   fetchRazorpayOrder,
@@ -301,4 +301,70 @@ export async function handleRazorpayWebhook(rawBody: string): Promise<{ ok: true
     actorId: 'razorpay:webhook',
   })
   return { ok: true }
+}
+
+/**
+ * Customer-initiated payment using alternative methods: CASH, NEFT, CHEQUE, UPI.
+ * Atomically updates order balance, auto-confirms if advance threshold is reached,
+ * and delivers email receipt immediately.
+ */
+export async function portalRecordManualPayment(input: {
+  token: string
+  orderId: string
+  method: 'CASH' | 'NEFT' | 'CHEQUE' | 'UPI'
+  amountInPaise?: number
+  reference?: string
+  notes?: string
+}) {
+  const order = await portalOrder(input.token, input.orderId)
+  const balance = ensurePayable(order)
+  const amount = input.amountInPaise ?? balance
+
+  if (!Number.isInteger(amount) || amount <= 0) {
+    throw new AppError('VALIDATION_FAILED', 'Payment amount must be a positive whole number of paise.')
+  }
+  if (amount > balance) {
+    throw new AppError('VALIDATION_FAILED', `Payment amount cannot exceed the outstanding balance of ${inr(balance)}.`)
+  }
+
+  const kind = order.paidPaise === 0 ? 'ADVANCE' : 'PARTIAL'
+  const autoRef = `${input.method}-${Date.now().toString().slice(-6)}`
+  const userRef = input.reference?.trim()
+  const fullRef = userRef ? `${userRef}${input.notes ? ` (${input.notes.trim()})` : ''}` : autoRef
+
+  const { payment, order: fresh } = await recordPayment({
+    orderId: order.id,
+    amountPaise: amount,
+    method: input.method,
+    kind,
+    reference: fullRef,
+    idempotencyKey: `portal_${input.method.toLowerCase()}_${order.id}_${Date.now()}`,
+    actorId: `portal:customer:${order.customerId}`,
+  })
+
+  // Send payment receipt email
+  if (order.customer.email) {
+    const freshPaid = fresh?.paidPaise ?? (order.paidPaise + amount)
+    const freshTotal = fresh?.totalPaise ?? order.totalPaise
+    const freshBalance = Math.max(0, freshTotal - freshPaid)
+
+    await enqueue({
+      channel: 'EMAIL',
+      recipient: order.customer.email,
+      template: 'PAYMENT_RECEIVED',
+      payload: {
+        to: order.customer.email,
+        name: order.customer.name,
+        orderNumber: order.orderNumber,
+        method: input.method,
+        reference: fullRef,
+        amountPaise: amount,
+        balancePaise: freshBalance,
+        link: `#/p/${input.token}`,
+      },
+    })
+    await runOutbox()
+  }
+
+  return paymentSummary(order.id)
 }
