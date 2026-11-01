@@ -1,0 +1,921 @@
+// SunPower Ops — full schema (53 tables), adapted from the PostgreSQL spec to SQLite.
+// Money = integer paise (Int). Quantities = Float. Date-only fields = "YYYY-MM-DD" strings (IST calendar).
+// Enums are strings validated in the service/Zod layer. JSON columns are strings.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────── Identity ───────────────────────────
+
+model User {
+  id            String    @id @default(uuid())
+  name          String
+  email         String    @unique
+  phone         String?
+  passwordHash  String
+  role          String // DIRECTOR, SALES, TECHNICIAN, WAREHOUSE, SUPPORT, ACCOUNTS
+  isActive      Boolean   @default(true)
+  failedLogins  Int       @default(0) // 10 wrong passwords lock the account 15 min (TRD 2.6)
+  lockedUntil   DateTime?
+  lastLoginAt   DateTime?
+  createdAt     DateTime  @default(now())
+  sessions      Session[]
+  technician    Technician?
+}
+
+model Session {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  expiresAt DateTime
+  lastSeenAt DateTime @default(now()) // idle-expiry clock (12 h staff, 30 d field)
+  createdAt DateTime @default(now())
+}
+
+model Technician {
+  id             String   @id @default(uuid())
+  userId         String   @unique
+  user           User     @relation(fields: [userId], references: [id])
+  skills         String // comma list: SURVEY, ONGRID, OFFGRID_BATTERY, ELECTRICAL_LEAD
+  baseLat        Float    @default(23.0225)
+  baseLng        Float    @default(72.5714)
+  hourlyCostPaise Int     @default(25000) // Rs 250/h
+  maxJobsPerDay  Int      @default(2)
+  isCrewLead     Boolean  @default(false)
+  leaves         TechnicianLeave[]
+  timeLogs       TimeLog[]
+  installationCrew InstallationCrew[]
+}
+
+model TechnicianLeave {
+  id            String    @id @default(uuid())
+  technicianId  String
+  technician    Technician @relation(fields: [technicianId], references: [id])
+  startsOn      String // YYYY-MM-DD
+  endsOn        String
+  reason        String
+}
+
+model Setting {
+  key       String   @id
+  value     String // JSON
+  updatedBy String?
+  updatedAt DateTime @updatedAt @default(now())
+}
+
+model NumberSequence {
+  name      String // e.g. LEAD
+  year      Int
+  nextValue Int    @default(1)
+
+  @@id([name, year])
+}
+
+// ─────────────────────────── Customers / CRM ───────────────────────────
+
+model Customer {
+  id             String    @id @default(uuid())
+  customerNumber String    @unique // C-0001
+  name           String
+  phone          String    @unique // E.164 +919XXXXXXXXX
+  email          String?
+  addressLine    String
+  addressNorm    String // normalised for duplicate matching
+  city           String
+  pincode        String
+  lat            Float?
+  lng            Float?
+  type           String    @default("HOME") // HOME, SMALL_FACTORY
+  consumerNo     String?
+  discom         String?
+  consentAt      DateTime?
+  createdAt      DateTime  @default(now())
+  leads          Lead[]
+  orders         Order[]
+  quotes         Quote[]
+  units          InventoryUnit[]
+  warranties     Warranty[]
+  tickets        ServiceTicket[]
+  accessLinks    CustomerAccessLink[]
+  invoices       Invoice[]
+}
+
+model CustomerAccessLink {
+  id             String    @id @default(uuid())
+  customerId     String
+  customer       Customer  @relation(fields: [customerId], references: [id])
+  scope          String // PORTAL, QUOTE, CERTIFICATE
+  tokenHash      String    @unique
+  tokenEnc       String?   // AES-256-GCM sealed token: lets staff re-send the SAME persistent link (P27)
+  expiresAt      DateTime
+  revokedAt      DateTime?
+  lastUsedAt     DateTime?
+  failedAttempts Int       @default(0)
+  lockedUntil    DateTime?
+  createdBy      String?
+  createdAt      DateTime  @default(now())
+}
+
+model Lead {
+  id                  String    @id @default(uuid())
+  leadNumber          String    @unique // L-2026-0001
+  customerId          String
+  customer            Customer  @relation(fields: [customerId], references: [id])
+  source              String // WEB_FORM, WHATSAPP, PHONE, WALK_IN, REFERRAL
+  status              String    @default("NEW") // NEW, CONTACTED, QUALIFIED, SURVEY_SCHEDULED, SURVEY_APPROVED, QUOTED, WON, LOST, DISQUALIFIED
+  ownerId             String // sales user
+  requestedCapacityKw Float?
+  systemTypePref      String? // ON_GRID, OFF_GRID
+  wantsSubsidy        Boolean   @default(false)
+  monthlyBillPaise    Int?
+  monthlyUnits        Float?
+  tariffPaise         Int? // paise per kWh
+  roofAreaSqm         Float?
+  gridOk              Boolean?
+  sanctionedLoadKw    Float?
+  phase               String? // SINGLE, THREE
+  lostReason          String?
+  firstContactedAt    DateTime?
+  slaDueAt            DateTime
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+  activities          LeadActivity[]
+  duplicateFlags      LeadDuplicateFlag[]
+  surveys             SiteSurvey[]
+  assessments         SiteAssessment[]
+  quotes              Quote[]
+}
+
+model LeadActivity {
+  id        String   @id @default(uuid())
+  leadId    String
+  lead      Lead     @relation(fields: [leadId], references: [id])
+  type      String // NOTE, CALL, STATUS_CHANGE, WHATSAPP, SYSTEM
+  body      String
+  actorId   String?
+  createdAt DateTime @default(now())
+}
+
+model LeadDuplicateFlag {
+  id                 String  @id @default(uuid())
+  leadId             String
+  lead               Lead    @relation(fields: [leadId], references: [id])
+  matchedCustomerId  String?
+  matchedLeadId      String?
+  reason             String // PHONE, ADDRESS
+  score              Float
+  status             String  @default("OPEN") // OPEN, LINKED, DISMISSED
+  resolvedBy         String?
+  createdAt          DateTime @default(now())
+}
+
+// ─────────────────────────── Survey & assessment ───────────────────────────
+
+model SiteSurvey {
+  id               String    @id @default(uuid())
+  leadId           String
+  lead             Lead      @relation(fields: [leadId], references: [id])
+  surveyorId       String // technician user id
+  status           String    @default("SCHEDULED") // SCHEDULED, COMPLETED, APPROVED, REJECTED
+  scheduledAt      DateTime
+  completedAt      DateTime?
+  roofType         String? // RCC, METAL, TILE
+  azimuthDeg       Int? // 0-359
+  tiltDeg          Int? // 0-90
+  usableAreaSqm    Float?
+  shading          String? // NONE, LOW, MEDIUM, HIGH
+  cableDistanceM   Float?
+  structureHeightM Float?
+  reviewedBy       String?
+  rejectionReason  String?
+  createdAt        DateTime  @default(now())
+  assessments      SiteAssessment[]
+}
+
+model SiteAssessment {
+  id                   String  @id @default(uuid())
+  leadId               String
+  lead                 Lead    @relation(fields: [leadId], references: [id])
+  surveyId             String?
+  survey               SiteSurvey? @relation(fields: [surveyId], references: [id])
+  inputs               String  @default("{}") // JSON
+  recommendedKw        Float
+  recommendedType      String
+  annualGenerationKwh  Float
+  annualSavingsPaise   Int
+  paybackYears         Float?
+  flags                String  @default("") // comma list
+  aiSummary            String?
+  aiRisks              String? // JSON array
+  aiModel              String?
+  promptVersion        String?
+  photoFindings        String? // JSON
+  photoModel           String?
+  createdAt            DateTime @default(now())
+}
+
+// ─────────────────────────── Catalogue ───────────────────────────
+
+model Product {
+  id                String  @id @default(uuid())
+  sku               String  @unique
+  name              String
+  category          String // PANEL, INVERTER, BATTERY, CHARGE_CONTROLLER, MOUNTING, CABLE, ACDB, DCDB, EARTHING, LIGHTNING_ARRESTER, CONNECTOR, SERVICE
+  brand             String?
+  model             String?
+  uom               String  @default("NOS") // NOS, MTR, SET, SVC
+  isSerialized      Boolean @default(false)
+  warrantyMonths    Int     @default(24)
+  warrantyStartBasis String @default("DELIVERY") // DELIVERY, INSTALLATION_SIGNOFF
+  ratedPowerW       Int?
+  specs             String? // JSON
+  hsnCode           String?
+  taxRateBp         Int     @default(0) // basis points, 1800 = 18%
+  stdCostPaise      Int     @default(0)
+  salePricePaise    Int     @default(0)
+  reorderLevel      Float   @default(0)
+  monitoringUrl     String?
+  isActive          Boolean @default(true)
+  bomLines          TemplateBomLine[]
+  quoteLines        QuoteLine[]
+  orderLines        OrderLine[]
+  templatePanel     SystemTemplate[] @relation("TemplatePanel")
+  stockLevels       StockLevel[]
+  units             InventoryUnit[]
+  dispatchLines     DispatchLine[]
+  poLines           PurchaseOrderLine[]
+  receiptLines      PurchaseReceiptLine[]
+  ticketParts       TicketPart[]
+}
+
+model SystemTemplate {
+  id                  String  @id @default(uuid())
+  code                String  @unique // ONG3KW
+  name                String
+  systemType          String // ON_GRID, OFF_GRID, PANEL_SET, SERVICE
+  capacityKw          Float   @default(0)
+  panelProductId      String?
+  panelProduct        Product? @relation("TemplatePanel", fields: [panelProductId], references: [id])
+  defaultCableDistanceM Float @default(20)
+  labourAllowancePaise Int   @default(0)
+  priceOverridePaise  Int?
+  isActive            Boolean @default(true)
+  version             Int     @default(1)
+  bomLines            TemplateBomLine[]
+}
+
+model TemplateBomLine {
+  id           String  @id @default(uuid())
+  templateId   String
+  template     SystemTemplate @relation(fields: [templateId], references: [id])
+  productId    String
+  product      Product @relation(fields: [productId], references: [id])
+  rule         String // FIXED, PANEL_COUNT, PER_PANEL, PER_KW, PER_CABLE_METER
+  value        Float   @default(1)
+  allowance    Float   @default(0) // extra metres for cables
+  sortOrder    Int     @default(0)
+
+  @@unique([templateId, productId])
+}
+
+model FaultCode {
+  id              String @id @default(uuid())
+  code            String
+  productModel    String
+  description     String
+  defaultPriority String @default("NORMAL")
+
+  @@unique([productModel, code])
+}
+
+// ─────────────────────────── Quotes ───────────────────────────
+
+model Quote {
+  id                  String    @id @default(uuid())
+  quoteNumber         String    @unique // Q-2026-0001
+  leadId              String
+  lead                Lead      @relation(fields: [leadId], references: [id])
+  customerId          String
+  customer            Customer  @relation(fields: [customerId], references: [id])
+  templateId          String
+  status              String    @default("DRAFT") // DRAFT, SENT, ACCEPTED, REJECTED, EXPIRED, SUPERSEDED
+  version             Int       @default(1)
+  supersedesId        String?
+  capacityKw          Float
+  systemType          String
+  cableDistanceM      Float
+  subtotalPaise       Int       @default(0)
+  discountPaise       Int       @default(0)
+  discountApprovedBy  String?
+  taxPaise            Int       @default(0)
+  totalPaise          Int       @default(0)
+  subsidyEstimatePaise Int      @default(0)
+  estimatedMarginBp   Int?
+  marginWarning       Boolean   @default(false)
+  validUntil          String? // YYYY-MM-DD
+  publicTokenHash     String?  @unique
+  sentAt              DateTime?
+  acceptedAt          DateTime?
+  acceptedName        String?
+  acceptedOfflineBy   String? // staff user who recorded an offline acceptance (T45R25)
+  rejectedAt          DateTime?
+  rejectReason        String?
+  createdAt           DateTime  @default(now())
+  lines               QuoteLine[]
+  order               Order?
+
+  @@unique([leadId, version])
+}
+
+model QuoteLine {
+  id              String  @id @default(uuid())
+  quoteId         String
+  quote           Quote   @relation(fields: [quoteId], references: [id])
+  productId       String
+  product         Product @relation(fields: [productId], references: [id])
+  description     String
+  qty             Float
+  unitPricePaise  Int
+  taxRateBp       Int     @default(0)
+  lineTotalPaise  Int     @default(0)
+  rule            String?
+  isManual        Boolean @default(false)
+  manualReason    String?
+}
+
+// ─────────────────────────── Orders & finance ───────────────────────────
+
+model Order {
+  id                   String    @id @default(uuid())
+  orderNumber          String    @unique // SO-2026-0001
+  quoteId              String?   @unique
+  quote                Quote?    @relation(fields: [quoteId], references: [id])
+  customerId           String
+  customer             Customer  @relation(fields: [customerId], references: [id])
+  status               String    @default("PENDING_ADVANCE") // PENDING_ADVANCE, CONFIRMED, READY_TO_DISPATCH, DISPATCHED, DELIVERED, INSTALLED, CLOSED, CANCELLED
+  capacityKw           Float
+  systemType           String
+  siteSnapshot         String?   @default("{}") // JSON
+  subtotalPaise        Int       @default(0)
+  discountPaise        Int       @default(0)
+  taxPaise             Int       @default(0)
+  totalPaise           Int       @default(0)
+  advanceRequiredPaise Int       @default(0)
+  paidPaise            Int       @default(0)
+  confirmedAt          DateTime?
+  overrideBy           String?
+  cancelReason         String?
+  createdAt            DateTime  @default(now())
+  lines                OrderLine[]
+  payments             Payment[]
+  invoices             Invoice[]
+  dispatches           Dispatch[]
+  installation         Installation?
+  subsidy              SubsidyApplication?
+  expenses             Expense[]
+  units                InventoryUnit[]
+}
+
+model OrderLine {
+  id             String  @id @default(uuid())
+  orderId        String
+  order          Order   @relation(fields: [orderId], references: [id])
+  productId      String
+  product        Product @relation(fields: [productId], references: [id])
+  description    String
+  qty            Float
+  unitPricePaise Int
+  taxRateBp      Int     @default(0)
+  qtyReserved    Float   @default(0)
+  qtyDispatched  Float   @default(0)
+  allocations    StockAllocation[]
+  dispatchLines  DispatchLine[]
+}
+
+model Payment {
+  id             String    @id @default(uuid())
+  orderId        String
+  order          Order     @relation(fields: [orderId], references: [id])
+  invoiceId      String?
+  amountPaise    Int
+  method         String // UPI, NEFT, CASH, CHEQUE, LOAN
+  kind           String    @default("ADVANCE") // ADVANCE, PART, FINAL
+  reference      String?
+  receivedOn     String // YYYY-MM-DD
+  status         String    @default("RECEIVED") // RECEIVED, REVERSED
+  reversalOfId   String?   // set on the audit row of a reversal/refund (FR-4.x payment reversal)
+  idempotencyKey String?
+  recordedBy     String
+  createdAt      DateTime  @default(now())
+
+  @@unique([idempotencyKey])
+}
+
+model Invoice {
+  id            String    @id @default(uuid())
+  invoiceNumber String    @unique // INV-2026-0001
+  customerId    String
+  customer      Customer  @relation(fields: [customerId], references: [id])
+  orderId       String?
+  order         Order?    @relation(fields: [orderId], references: [id])
+  ticketId      String?
+  type          String // SALE, SERVICE
+  issueDate     String
+  dueDate       String?
+  subtotalPaise Int       @default(0)
+  taxPaise      Int       @default(0)
+  totalPaise    Int       @default(0)
+  status        String    @default("ISSUED") // ISSUED, PAID, VOID
+  lines         InvoiceLine[]
+}
+
+model InvoiceLine {
+  id             String   @id @default(uuid())
+  invoiceId      String
+  invoice        Invoice  @relation(fields: [invoiceId], references: [id])
+  productId      String?
+  description    String
+  qty            Float
+  unitPricePaise Int
+  taxRateBp      Int      @default(0)
+  lineTotalPaise Int      @default(0)
+}
+
+model Expense {
+  id                   String  @id @default(uuid())
+  category             String // FUEL, TRANSPORT, RENT, MARKETING, MISC, LABOUR
+  amountPaise          Int
+  incurredOn           String // YYYY-MM-DD
+  orderId              String?
+  order                Order?  @relation(fields: [orderId], references: [id])
+  ticketId             String?
+  description          String?
+  recordedBy           String
+  createdAt            DateTime @default(now())
+}
+
+model SubsidyApplication {
+  id             String  @id @default(uuid())
+  orderId        String  @unique
+  order          Order   @relation(fields: [orderId], references: [id])
+  status         String  @default("NOT_STARTED") // NOT_STARTED, PREPARING, SUBMITTED, APPROVED, DISBURSED, REJECTED
+  applicationRef String?
+  expectedPaise  Int     @default(0)
+  receivedPaise  Int     @default(0)
+  submittedOn    String?
+  disbursedOn    String?
+  notes          String?
+}
+
+// ─────────────────────────── Inventory ───────────────────────────
+
+model StockLocation {
+  id     String @id @default(uuid())
+  code   String @unique // WH1, VEH1, SITES, RMA, SCRAP
+  name   String
+  type   String // WAREHOUSE, VEHICLE, CUSTOMER_SITES, RMA, SCRAP
+  levels StockLevel[]
+}
+
+model StockLevel {
+  productId     String
+  product       Product @relation(fields: [productId], references: [id])
+  locationId    String
+  location      StockLocation @relation(fields: [locationId], references: [id])
+  onHand        Float   @default(0)
+  reserved      Float   @default(0)
+  avgCostPaise  Int     @default(0)
+  updatedAt     DateTime @updatedAt @default(now())
+
+  @@id([productId, locationId])
+}
+
+model StockMovement {
+  id             String   @id @default(uuid())
+  productId      String
+  unitId         String?
+  qty            Float
+  fromLocationId String?
+  toLocationId   String?
+  type           String // RECEIPT, DISPATCH, DELIVERY, RETURN, ADJUST_IN, ADJUST_OUT, RMA_OUT, SCRAP
+  unitCostPaise  Int      @default(0)
+  refType        String // purchase_receipt, dispatch, ticket, adjustment
+  refId          String
+  reason         String?
+  createdBy      String
+  createdAt      DateTime @default(now())
+}
+
+model Supplier {
+  id        String   @id @default(uuid())
+  name      String   @unique
+  contact   String?
+  phone     String?
+  email     String?
+  gstin     String?
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  purchaseOrders PurchaseOrder[]
+  receipts  PurchaseReceipt[]
+}
+
+model PurchaseOrder {
+  id         String   @id @default(uuid())
+  poNumber   String   @unique // PO-2026-0001
+  supplierId String
+  supplier   Supplier @relation(fields: [supplierId], references: [id])
+  status     String   @default("DRAFT") // DRAFT, OPEN, PARTIAL, RECEIVED, CANCELLED
+  orderedOn  String
+  expectedOn String?
+  totalPaise Int      @default(0)
+  createdBy  String
+  createdAt  DateTime @default(now())
+  lines      PurchaseOrderLine[]
+  receipts   PurchaseReceipt[]
+}
+
+model PurchaseOrderLine {
+  id           String  @id @default(uuid())
+  poId         String
+  po           PurchaseOrder @relation(fields: [poId], references: [id])
+  productId    String
+  product      Product @relation(fields: [productId], references: [id])
+  qtyOrdered   Float
+  qtyReceived  Float   @default(0)
+  unitCostPaise Int
+  receiptLines PurchaseReceiptLine[]
+}
+
+model PurchaseReceipt {
+  id                 String  @id @default(uuid())
+  receiptNumber      String  @unique // GRN-2026-0001
+  supplierName       String
+  supplierId         String?
+  supplier           Supplier? @relation(fields: [supplierId], references: [id])
+  poId               String?
+  po                 PurchaseOrder? @relation(fields: [poId], references: [id])
+  supplierInvoiceRef String?
+  receivedOn         String
+  locationId         String
+  totalPaise         Int     @default(0)
+  createdAt          DateTime @default(now())
+  lines              PurchaseReceiptLine[]
+}
+
+model PurchaseReceiptLine {
+  id         String @id @default(uuid())
+  receiptId  String
+  receipt    PurchaseReceipt @relation(fields: [receiptId], references: [id])
+  poLineId   String?
+  poLine     PurchaseOrderLine? @relation(fields: [poLineId], references: [id])
+  productId  String
+  product    Product @relation(fields: [productId], references: [id])
+  qty        Float
+  unitCostPaise Int
+}
+
+model InventoryUnit {
+  id                String    @id @default(uuid())
+  productId         String
+  product           Product   @relation(fields: [productId], references: [id])
+  serialNumber      String
+  qrCode            String    @unique // e.g. SP-XXXXXX, opens /w/{code}
+  status            String    @default("IN_STOCK") // IN_STOCK, PICKED, DISPATCHED, DELIVERED, INSTALLED, RMA, REPLACED, SCRAPPED
+  locationId        String
+  unitCostPaise     Int       @default(0)
+  orderId           String?
+  order             Order?    @relation(fields: [orderId], references: [id])
+  customerId        String?
+  customer          Customer? @relation(fields: [customerId], references: [id])
+  installationId    String?
+  deliveredOn       String?
+  replacedByUnitId  String?
+  receiptLineId     String?
+  createdAt         DateTime  @default(now())
+  warranties        Warranty[]
+  dispatchUnits     DispatchUnit[]
+  tickets           ServiceTicket[]
+
+  @@unique([productId, serialNumber])
+}
+
+model StockAllocation {
+  id          String   @id @default(uuid())
+  orderLineId String
+  orderLine   OrderLine @relation(fields: [orderLineId], references: [id])
+  productId   String
+  locationId  String
+  qty         Float
+  status      String   @default("ACTIVE") // ACTIVE, CONSUMED, RELEASED
+  createdAt   DateTime @default(now())
+  closedAt    DateTime?
+}
+
+// ─────────────────────────── Dispatch ───────────────────────────
+
+model Dispatch {
+  id               String    @id @default(uuid())
+  dispatchNumber   String    @unique // DSP-2026-0001
+  orderId          String
+  order            Order     @relation(fields: [orderId], references: [id])
+  status           String    @default("PICKING") // PICKING, READY, IN_TRANSIT, DELIVERED
+  fromLocationId   String
+  vehicleLocationId String
+  scheduledOn      String
+  crewLeadId       String?
+  packedBy         String?
+  departedAt       DateTime?
+  deliveredAt      DateTime?
+  deliveredLat     Float?
+  deliveredLng     Float?
+  createdAt        DateTime  @default(now())
+  lines            DispatchLine[]
+}
+
+model DispatchLine {
+  id            String  @id @default(uuid())
+  dispatchId    String
+  dispatch      Dispatch @relation(fields: [dispatchId], references: [id])
+  orderLineId   String
+  orderLine     OrderLine @relation(fields: [orderLineId], references: [id])
+  productId     String
+  product       Product @relation(fields: [productId], references: [id])
+  qtyRequired   Float
+  qtyLoaded     Float   @default(0)
+  units         DispatchUnit[]
+}
+
+model DispatchUnit {
+  id              String   @id @default(uuid())
+  dispatchId      String
+  dispatchLineId  String
+  dispatchLine    DispatchLine @relation(fields: [dispatchLineId], references: [id])
+  unitId          String
+  unit            InventoryUnit @relation(fields: [unitId], references: [id])
+  method          String   @default("QR") // QR, BARCODE, MANUAL
+  scannedBy       String
+  scannedAt       DateTime @default(now())
+  removedAt       DateTime?
+
+  @@unique([dispatchId, unitId])
+}
+
+// ─────────────────────────── Field operations ───────────────────────────
+
+model Installation {
+  id                  String   @id @default(uuid())
+  orderId             String   @unique
+  order               Order    @relation(fields: [orderId], references: [id])
+  status              String   @default("SCHEDULED") // SCHEDULED, IN_PROGRESS, AWAITING_SIGNOFF, COMPLETED, ON_HOLD
+  scheduledOn         String?
+  slot                String? // MORNING, AFTERNOON
+  crewLeadId          String?
+  startedAt           DateTime?
+  startLat            Float?
+  startLng            Float?
+  finishedAt          DateTime?
+  finishLat           Float?
+  finishLng           Float?
+  installedCapacityKw Float?
+  testReadingW        Int?
+  checklist           String   @default("{}") // JSON {standsMounted, panelsLaid, wiringBoxes, earthingDone, powerTest}
+  signedName          String?
+  signedAt            DateTime?
+  signatureAttachmentId String?
+  signoffHash         String?
+  certificateTokenHash String?
+  holdReason          String?
+  createdAt           DateTime @default(now())
+  crew                InstallationCrew[]
+  suggestions         CrewSuggestion[]
+  timeLogs            TimeLog[]
+  warranties          Warranty[]
+  tickets             ServiceTicket[]
+  maintenanceAlerts   MaintenanceAlert[]
+}
+
+model InstallationCrew {
+  installationId String
+  installation   Installation @relation(fields: [installationId], references: [id])
+  technicianId   String
+  technician     Technician  @relation(fields: [technicianId], references: [id])
+  role           String // LEAD, MEMBER
+
+  @@id([installationId, technicianId])
+}
+
+model CrewSuggestion {
+  id             String @id @default(uuid())
+  installationId String
+  installation   Installation @relation(fields: [installationId], references: [id])
+  rank           Int
+  technicianIds  String // comma list
+  score          Float
+  breakdown      String // JSON
+  createdAt      DateTime @default(now())
+}
+
+model TimeLog {
+  id              String   @id @default(uuid())
+  technicianId    String
+  technician      Technician @relation(fields: [technicianId], references: [id])
+  installationId  String?
+  installation    Installation? @relation(fields: [installationId], references: [id])
+  ticketId        String?
+  surveyId        String?
+  startedAt       DateTime
+  endedAt         DateTime?
+  hourlyCostPaise Int      @default(25000)
+}
+
+// ─────────────────────────── Warranty & service ───────────────────────────
+
+model Warranty {
+  id               String   @id @default(uuid())
+  unitId           String?
+  unit             InventoryUnit? @relation(fields: [unitId], references: [id])
+  installationId   String
+  installation     Installation @relation(fields: [installationId], references: [id])
+  customerId       String
+  customer         Customer  @relation(fields: [customerId], references: [id])
+  productId        String?
+  coverage         String   @default("EQUIPMENT") // EQUIPMENT, WORKMANSHIP
+  startDate        String // YYYY-MM-DD
+  endDate          String
+  months           Int
+  status           String   @default("ACTIVE") // ACTIVE, VOID, TRANSFERRED
+  source           String // DELIVERY, INSTALLATION_SIGNOFF, REPLACEMENT, WORKMANSHIP
+  parentWarrantyId String?
+  // FR-7.7 two-step exclusion: SUPPORT requests with photo evidence, DIRECTOR approves.
+  voidRequestedBy  String?
+  voidRequestedAt  DateTime?
+  voidRequestReason String?
+  voidReason       String?
+  voidedBy         String?
+  createdAt        DateTime @default(now())
+  tickets          ServiceTicket[]
+}
+
+model ServiceTicket {
+  id                   String    @id @default(uuid())
+  ticketNumber         String    @unique // T-2026-0001
+  customerId           String
+  customer             Customer  @relation(fields: [customerId], references: [id])
+  installationId       String?
+  installation         Installation? @relation(fields: [installationId], references: [id])
+  unitId               String?
+  unit                 InventoryUnit? @relation(fields: [unitId], references: [id])
+  warrantyId           String?
+  warranty             Warranty?  @relation(fields: [warrantyId], references: [id])
+  channel              String // PHONE, WHATSAPP, WEB, VISIT, MAINTENANCE_ALERT
+  category             String // NO_POWER, FAULT_CODE, LOW_GENERATION, DAMAGE, OTHER
+  faultCode            String?
+  description          String
+  priority             String    @default("NORMAL") // LOW, NORMAL, HIGH, URGENT
+  status               String    @default("OPEN") // OPEN, ASSIGNED, IN_PROGRESS, RESOLVED, CLOSED
+  warrantyVerdict      String // IN_WARRANTY, OUT_OF_WARRANTY, EXCLUDED, UNKNOWN_UNIT
+  billingMode          String // WARRANTY, CHARGEABLE
+  assignedTo           String?
+  slaDueAt             DateTime
+  resolvedAt           DateTime?
+  customerConfirmedAt  DateTime?
+  confirmationMethod   String? // PORTAL, PHONE
+  closedAt             DateTime?
+  resolutionNotes      String?
+  reopenCount          Int       @default(0)
+  createdBy            String?
+  createdAt            DateTime  @default(now())
+  parts                TicketPart[]
+  events               TicketEvent[]
+}
+
+model TicketPart {
+  id              String  @id @default(uuid())
+  ticketId        String
+  ticket          ServiceTicket @relation(fields: [ticketId], references: [id])
+  productId       String
+  product         Product @relation(fields: [productId], references: [id])
+  qty             Float
+  removedUnitId   String?
+  installedUnitId String?
+  unitPricePaise  Int     @default(0)
+  chargeable      Boolean @default(false)
+}
+
+model TicketEvent {
+  id         String   @id @default(uuid())
+  ticketId   String
+  ticket     ServiceTicket @relation(fields: [ticketId], references: [id])
+  type       String
+  fromStatus String?
+  toStatus   String?
+  note       String?
+  actorId    String?
+  createdAt  DateTime @default(now())
+}
+
+model MaintenanceAlert {
+  id             String   @id @default(uuid())
+  installationId String
+  installation   Installation @relation(fields: [installationId], references: [id])
+  unitId         String?
+  rule           String // CLEANING_DUE, PRE_MONSOON, REPEAT_FAULT, MODEL_RISK, BATTERY_AGE, WARRANTY_ENDING_SALES, WARRANTY_REMINDER_CUSTOMER
+  riskScore      Int      @default(0)
+  dueOn          String
+  reason         String?
+  status         String   @default("OPEN") // OPEN, DONE, TICKETED
+  ticketId       String?
+  createdAt      DateTime @default(now())
+
+  @@unique([installationId, rule, dueOn])
+}
+
+// ─────────────────────────── Platform ───────────────────────────
+
+model Attachment {
+  id         String   @id @default(uuid())
+  ownerType  String // SURVEY, INSTALLATION, TICKET, EXPENSE, WARRANTY
+  ownerId    String
+  kind       String // SURVEY, BEFORE, AFTER, ARRAY, INVERTER, EARTHING, SIGNATURE, EXTRA, OTHER
+  storageKey String
+  mime       String
+  sizeBytes  Int      @default(0)
+  sha256     String?
+  lat        Float?
+  lng        Float?
+  takenAt    DateTime?
+  uploadedBy String
+  createdAt  DateTime @default(now())
+  // T3: where the bytes live — 'S3' (object storage, storageKey = object key) or
+  // 'DB' (bytes in the MediaBlob fallback row). NULL = legacy rows whose
+  // storageKey points at a file under db/uploads/ on local disk.
+  storage    String?
+  mediaBlob  MediaBlob?
+}
+
+// T3: DB fallback blob — when object storage is unreachable the upload's bytes
+// are stored in SQLite so the upload never hard-fails. One-to-one with
+// Attachment; also serves as a belt-and-braces copy for S3-backed rows.
+model MediaBlob {
+  id           String     @id @default(uuid())
+  attachment   Attachment @relation(fields: [attachmentId], references: [id])
+  attachmentId String     @unique
+  bytes        Bytes
+  createdAt    DateTime   @default(now())
+}
+
+model Outbox {
+  id                String    @id @default(uuid())
+  channel           String // SMS, EMAIL
+  recipient         String
+  template          String
+  payload           String    @default("{}") // JSON
+  status            String    @default("QUEUED") // QUEUED, SENDING, SENT, DELIVERED, FAILED, DEAD
+  attempts          Int       @default(0)
+  nextAttemptAt     DateTime  @default(now())
+  sentAt            DateTime?
+  deliveredAt       DateTime?
+  providerMessageId String?
+  idempotencyKey    String?
+  lastError         String?
+  createdAt         DateTime  @default(now())
+}
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  actorType  String // USER, CUSTOMER, SYSTEM
+  actorId    String?
+  entityType String
+  entityId   String
+  action     String
+  before     String?
+  after      String?
+  requestId  String?
+  createdAt  DateTime @default(now())
+}
+
+model ShareLink {
+  id        String   @id @default(uuid())
+  tokenHash String   @unique
+  resource  String // analytics
+  params    String   @default("{}")
+  expiresAt DateTime
+  createdBy String
+  revokedAt DateTime?
+  createdAt DateTime @default(now())
+}
+
+model IdempotencyKey {
+  scope         String
+  key           String
+  responseJson  String?  // stored reply so a retried call replays the original result (D16)
+  createdAt     DateTime @default(now())
+
+  @@id([scope, key])
+}

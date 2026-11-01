@@ -1,0 +1,66 @@
+# Dependencies
+node_modules/
+/.pnp
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+
+# Next.js & Build Artifacts
+.next/
+.next-build/
+.next-run/
+/out/
+/build/
+dist/
+test-results/
+
+# Environment Variables & Secrets
+.env
+.env.*
+.env*.local
+!.env.example
+
+# Process IDs and Runtime Logs
+*.pid
+.zscripts/*.pid
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+dev.log
+dev.out.log
+server.log
+
+# Temporary tool execution logs
+tool-results/
+
+# Testing & Coverage
+/coverage/
+.nyc_output/
+
+# System & OS Files
+.DS_Store
+Thumbs.db
+*.pem
+
+# Vercel
+.vercel/
+
+# TypeScript & Cache
+*.tsbuildinfo
+next-env.d.ts
+
+# IDEs
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+.idea/
+.claude/
+.z-ai-config/
+
+# Skills directory
+/skills/
