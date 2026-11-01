@@ -56,8 +56,8 @@ export async function POST(req: NextRequest) {
       // re-sent to the phone on file — never handed to the anonymous caller.
       portalToken: result.portalToken,
       message: result.isNewCustomer
-        ? 'Your personal SunPower link is ready and was also sent by SMS.'
-        : 'We found your SunPower account and re-sent your personal link to the phone number on file.',
+        ? 'Your personal SunPower link is ready and was also sent to your email.'
+        : 'We found your SunPower account and re-sent your personal link to the email address on file.',
     }
   })
 }

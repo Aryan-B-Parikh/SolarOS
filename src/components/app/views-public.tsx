@@ -4,7 +4,7 @@
 
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { api, money, fmtDate, num, relTime, useData, CUSTOMER_STAGES, VERDICT_COPY, daysUntil } from './lib'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -42,7 +42,7 @@ export function EnquiryView() {
     requestedCapacityKw: number | null; systemTypePref: string; wantsSubsidy: boolean
     monthlyBillRupees: number; consent: boolean; honeypot: string
   }>({
-    name: '', phone: '', addressLine: '', city: 'Ahmedabad', pincode: '',
+    name: '', phone: '', addressLine: '', city: '', pincode: '',
     requestedCapacityKw: 3, systemTypePref: 'ON_GRID', wantsSubsidy: true, monthlyBillRupees: 3000,
     consent: false, honeypot: '',
   })
@@ -139,7 +139,7 @@ export function EnquiryView() {
               </Button>
             ) : (
               <p className="mt-5 text-sm text-slate-600 max-w-md mx-auto">
-                Check your phone for the SMS with your personal SunPower link — it never changes, so an older SMS with the
+                Check your email for your personal SunPower link — it never changes, so an older email with the
                 same link still works.
               </p>
             )}
@@ -456,6 +456,76 @@ function WarrantyLookupCard() {
   const [busy, setBusy] = useState(false)
   const [result, setResult] = useState<any>(null)
   const [err, setErr] = useState<string | null>(null)
+  const [scanning, setScanning] = useState(false)
+  const [scanErr, setScanErr] = useState<string | null>(null)
+  const videoRef = useRef<HTMLVideoElement>(null)
+  const streamRef = useRef<MediaStream | null>(null)
+  const rafRef = useRef<number>(0)
+
+  // Stop camera cleanly on unmount or when scanning turns off
+  useEffect(() => {
+    if (!scanning) {
+      cancelAnimationFrame(rafRef.current)
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach(t => t.stop())
+        streamRef.current = null
+      }
+      return
+    }
+    setScanErr(null)
+    let active = true
+
+    const hasBarcodeDetector = typeof (window as any).BarcodeDetector !== 'undefined'
+    if (!hasBarcodeDetector) {
+      setScanErr('QR scanning is not supported in this browser. Use Chrome or Edge on Android/desktop.')
+      setScanning(false)
+      return
+    }
+
+    navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
+      .then(stream => {
+        if (!active) { stream.getTracks().forEach(t => t.stop()); return }
+        streamRef.current = stream
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream
+          videoRef.current.play()
+        }
+
+        const detector = new (window as any).BarcodeDetector({ formats: ['qr_code'] })
+
+        const tick = async () => {
+          if (!active || !videoRef.current) return
+          try {
+            const codes = await detector.detect(videoRef.current)
+            if (codes.length > 0) {
+              const raw: string = codes[0].rawValue ?? ''
+              // Extract serial from QR: could be a full URL /w/<serial> or just the serial
+              const match = raw.match(/\/w\/([^/?#]+)/) || raw.match(/([A-Z0-9]+-[A-Z0-9]+-[0-9]+)/i)
+              const found = match ? match[1] : raw.trim()
+              if (found) {
+                setSerial(found)
+                setScanning(false)
+                return
+              }
+            }
+          } catch { /* detector not ready yet */ }
+          rafRef.current = requestAnimationFrame(tick)
+        }
+        rafRef.current = requestAnimationFrame(tick)
+      })
+      .catch(e => {
+        setScanErr('Camera access denied. Please allow camera permissions and try again.')
+        setScanning(false)
+      })
+
+    return () => { active = false }
+  }, [scanning])
+
+  // Auto-lookup when serial is filled by QR scan
+  useEffect(() => {
+    if (serial.trim().length > 4 && !busy && !result) lookup()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [serial])
 
   const lookup = async () => {
     const s = serial.trim()
@@ -475,17 +545,50 @@ function WarrantyLookupCard() {
       <CardContent className="p-4 space-y-2">
         <div className="grid h-9 w-9 place-items-center rounded-lg bg-amber-50 text-amber-600"><ShieldCheck className="h-5 w-5" /></div>
         <div className="text-sm font-semibold">Check your warranty</div>
-        <p className="text-sm text-slate-500">Type the serial number from the equipment label or your completion certificate.</p>
+        <p className="text-sm text-slate-500">Type the serial number from the equipment label or scan the QR code on it.</p>
         <div className="flex gap-2">
           <Input
             value={serial}
-            onChange={(e) => { setSerial(e.target.value); setErr(null) }}
+            onChange={(e) => { setSerial(e.target.value); setErr(null); setResult(null) }}
             onKeyDown={(e) => { if (e.key === 'Enter') lookup() }}
             placeholder="e.g. PNL540-26A-000500"
             aria-label="Serial number"
           />
+          <Button
+            variant="outline"
+            size="icon"
+            title="Scan QR code"
+            onClick={() => setScanning(s => !s)}
+            className={scanning ? 'border-blue-500 text-blue-600' : ''}
+          >
+            <Camera className="h-4 w-4" />
+          </Button>
           <Button disabled={busy || !serial.trim()} onClick={lookup}>{busy ? 'Checking…' : 'Check'}</Button>
         </div>
+
+        {/* Camera viewfinder */}
+        {scanning && (
+          <div className="relative rounded-lg overflow-hidden bg-black aspect-video w-full">
+            <video ref={videoRef} className="w-full h-full object-cover" muted playsInline />
+            {/* Scan guide overlay */}
+            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+              <div className="w-48 h-48 border-2 border-white/70 rounded-lg shadow-[0_0_0_9999px_rgba(0,0,0,0.45)]" />
+            </div>
+            <div className="absolute bottom-2 left-0 right-0 text-center text-white text-xs">
+              Point at the QR code on the equipment label
+            </div>
+            <Button
+              size="sm"
+              variant="secondary"
+              className="absolute top-2 right-2 opacity-80"
+              onClick={() => setScanning(false)}
+            >
+              Cancel
+            </Button>
+          </div>
+        )}
+
+        {scanErr && <div className="text-sm text-amber-900 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">{scanErr}</div>}
         {err && <div className="text-sm text-amber-900 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2" role="alert">{err}</div>}
         {result && (
           <div className="rounded-lg border p-3 space-y-2">
