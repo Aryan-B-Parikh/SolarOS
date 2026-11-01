@@ -1457,21 +1457,29 @@ function ServiceRequests({ token, verified, onVerified, tickets, reload }: { tok
 }
 
 function RequestFreshLink() {
-  const [phone, setPhone] = useState('')
+  const [email, setEmail] = useState('')
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState<string | null>(null)
+  const isValidEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
   return (
     <Card>
       <CardContent className="p-4 space-y-2">
         <div className="grid h-9 w-9 place-items-center rounded-lg bg-blue-50 text-blue-700"><Clock className="h-5 w-5" /></div>
         <div className="text-sm font-semibold">Track your project</div>
-        <p className="text-sm text-slate-500">Lost your My SunPower link? Enter the registered mobile number and we will SMS you a fresh one.</p>
+        <p className="text-sm text-slate-500">Lost your My SunPower link? Enter your registered email address and we will send you a fresh one.</p>
         <div className="flex gap-2">
-          <Input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="Your registered mobile number" inputMode="tel" aria-label="Registered mobile number" />
-          <Button disabled={phone.replace(/\D/g, '').length < 10 || busy} onClick={async () => {
+          <Input
+            type="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            placeholder="Your registered email address"
+            inputMode="email"
+            aria-label="Registered email address"
+          />
+          <Button disabled={!isValidEmail || busy} onClick={async () => {
             setBusy(true)
             try {
-              const r = await api('/public/portal-link-request', { method: 'POST', json: { phone } })
+              const r = await api('/public/portal-link-request', { method: 'POST', json: { email } })
               setMsg(r.message)
             } catch (e: any) { toast.error(e.message) } finally { setBusy(false) }
           }}>Send</Button>
