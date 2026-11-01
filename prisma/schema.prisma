@@ -1,4 +1,4 @@
-// SunPower Ops — full schema (53 tables), adapted from the PostgreSQL spec to SQLite.
+// SunPower Ops — full schema (53 tables), migrated to PostgreSQL.
 // Money = integer paise (Int). Quantities = Float. Date-only fields = "YYYY-MM-DD" strings (IST calendar).
 // Enums are strings validated in the service/Zod layer. JSON columns are strings.
 
@@ -7,7 +7,7 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
